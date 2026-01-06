@@ -1,11 +1,11 @@
 {
   "name": "uyeh-tech-server",
-  "version": "6.0.0",
-  "description": "Complete UYEH TECH Backend Server v6.0 - Admin Dashboard System with User Management, Orders, Products, Blog, Coupons, and Analytics",
-  "main": "server.js",
+  "version": "7.0.0",
+  "description": "UYEH TECH Complete Backend Server v7.0 - Admin Dashboard, Real-time Chat, Agent System, User Management, Orders, Products, Blog, Coupons, and Analytics",
+  "main": "uyeh.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js",
+    "start": "node uyeh.js",
+    "dev": "nodemon uyeh.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
@@ -26,7 +26,13 @@
     "otp",
     "coupon-system",
     "user-management",
-    "analytics"
+    "analytics",
+    "websocket",
+    "real-time-chat",
+    "support-tickets",
+    "agent-dashboard",
+    "file-upload",
+    "multer"
   ],
   "author": "UYEH TECH <uyehtech@gmail.com> (https://uyehtech.com)",
   "license": "ISC",
@@ -44,7 +50,6 @@
     "npm": ">=6.0.0"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.71.2",
     "axios": "^1.6.2",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
@@ -52,9 +57,8 @@
     "express": "^4.18.2",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.0.3",
-    "multer": "^2.0.2",
-    "socket.io": "^4.8.1",
-    "ws": "^8.18.3"
+    "multer": "^1.4.5-lts.1",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
@@ -63,14 +67,15 @@
     "restartable": "rs",
     "ignore": [
       ".git",
-      "node_modules/**/node_modules"
+      "node_modules/**/node_modules",
+      "uploads/*"
     ],
     "verbose": true,
     "execMap": {
       "js": "node"
     },
     "watch": [
-      "server.js",
+      "uyeh.js",
       ".env"
     ],
     "env": {
