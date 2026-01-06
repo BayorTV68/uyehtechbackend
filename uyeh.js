@@ -11,6 +11,11 @@ const cors = require('cors');
 const axios = require('axios');
 const crypto = require('crypto');
 require('dotenv').config();
+const http = require('http');
+const WebSocket = require('ws');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const app = express();
 
 // ========== MIDDLEWARE ==========
@@ -71,6 +76,20 @@ const userSchema = new mongoose.Schema({
     orders: { type: Boolean, default: true },
     marketing: { type: Boolean, default: false }
   },
+  
+  isAgent: { type: Boolean, default: false },
+  agentInfo: {
+    department: { type: String, enum: ['Sales', 'Support', 'Technical', 'Billing', 'General'] },
+    status: { type: String, enum: ['online', 'offline', 'busy', 'away'], default: 'offline' },
+    activeChats: { type: Number, default: 0 },
+    maxChats: { type: Number, default: 5 },
+    rating: { type: Number, default: 0, min: 0, max: 5 },
+    totalChats: { type: Number, default: 0 },
+    resolvedChats: { type: Number, default: 0 }
+  },
+  lastActivity: Date,
+
+
   isAdmin: { type: Boolean, default: false },
   isBanned: { type: Boolean, default: false },
   banReason: String,
@@ -84,6 +103,7 @@ userSchema.pre('save', function(next) {
   if (this.email.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
     this.isAdmin = true;
   }
+
   next();
 });
 
@@ -882,6 +902,116 @@ app.put('/api/profile', authenticateToken, async (req, res) => {
 });
 
 console.log('✅ Part 2 loaded: Auth & User routes configured');
+
+// WebSocket Server Setup
+const wss = new WebSocket.Server({ 
+  server,
+  path: '/ws',
+  verifyClient: (info) => true
+});
+
+// Store active WebSocket connections
+const activeConnections = new Map();
+const agentConnections = new Map();
+const customerConnections = new Map();
+
+// WebSocket connection handler
+wss.on('connection', (ws, req) => {
+  const urlParams = new URLSearchParams(req.url.split('?')[1]);
+  const chatId = urlParams.get('chatId');
+  const agentId = urlParams.get('agentId');
+  const customerId = urlParams.get('customerId');
+  
+  console.log(`\n🔌 WebSocket Connected - Chat: ${chatId}, Agent: ${agentId}, Customer: ${customerId}`);
+  
+  if (chatId) {
+    if (!activeConnections.has(chatId)) {
+      activeConnections.set(chatId, new Set());
+    }
+    activeConnections.get(chatId).add(ws);
+  }
+  
+  if (agentId) agentConnections.set(agentId, ws);
+  if (customerId) customerConnections.set(customerId, ws);
+  
+  ws.isAlive = true;
+  ws.chatId = chatId;
+  ws.agentId = agentId;
+  ws.customerId = customerId;
+  
+  ws.send(JSON.stringify({
+    type: 'connected',
+    message: 'Connected to UYEH TECH Support',
+    timestamp: new Date().toISOString()
+  }));
+  
+  ws.on('pong', () => { ws.isAlive = true; });
+  
+  ws.on('message', (message) => {
+    try {
+      const data = JSON.parse(message);
+      if (data.type === 'ping') {
+        ws.send(JSON.stringify({ type: 'pong', timestamp: new Date().toISOString() }));
+      } else if (data.type === 'typing' && ws.chatId) {
+        broadcastToChat(ws.chatId, {
+          type: 'typing',
+          userId: data.userId || ws.customerId || ws.agentId,
+          isTyping: data.isTyping
+        }, ws);
+      }
+    } catch (error) {
+      console.error('❌ WebSocket message error:', error);
+    }
+  });
+  
+  ws.on('close', () => {
+    console.log(`🔌 WebSocket Disconnected - Chat: ${chatId}`);
+    if (chatId && activeConnections.has(chatId)) {
+      activeConnections.get(chatId).delete(ws);
+      if (activeConnections.get(chatId).size === 0) {
+        activeConnections.delete(chatId);
+      }
+    }
+    if (agentId) agentConnections.delete(agentId);
+    if (customerId) customerConnections.delete(customerId);
+  });
+  
+  ws.on('error', (error) => console.error('❌ WebSocket error:', error));
+});
+
+// Heartbeat
+setInterval(() => {
+  wss.clients.forEach((ws) => {
+    if (ws.isAlive === false) return ws.terminate();
+    ws.isAlive = false;
+    ws.ping();
+  });
+}, 30000);
+
+// Helper functions
+function broadcastToChat(chatId, message, excludeWs = null) {
+  if (activeConnections.has(chatId)) {
+    activeConnections.get(chatId).forEach((clientWs) => {
+      if (clientWs !== excludeWs && clientWs.readyState === WebSocket.OPEN) {
+        clientWs.send(JSON.stringify(message));
+      }
+    });
+  }
+}
+
+function sendToAgent(agentId, message) {
+  const agentWs = agentConnections.get(agentId);
+  if (agentWs && agentWs.readyState === WebSocket.OPEN) {
+    agentWs.send(JSON.stringify(message));
+  }
+}
+
+function sendToCustomer(customerId, message) {
+  const customerWs = customerConnections.get(customerId);
+  if (customerWs && customerWs.readyState === WebSocket.OPEN) {
+    customerWs.send(JSON.stringify(message));
+  }
+}
 
 // ========== END OF PART 2 ==========
 // Continue to Part 3 for Admin Dashboard & Analytics// ========== UYEH TECH SERVER v6.0 - PART 3 OF 6 ==========
@@ -2633,6 +2763,604 @@ app.delete('/api/auth/delete-account', authenticateToken, async (req, res) => {
 });
 
 console.log('✅ Part 5 loaded: Blog Management & System Settings configured');
+// ═════════════════════════════════════════════════════════════════════════════
+// STEP 3: ADD FILE UPLOAD MIDDLEWARE (AFTER CORS SETUP)
+// ═════════════════════════════════════════════════════════════════════════════
+
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+  console.log('📁 Created uploads directory');
+}
+
+app.use('/uploads', express.static(uploadsDir));
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadsDir),
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const sanitizedFilename = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+    cb(null, uniqueSuffix + '-' + sanitizedFilename);
+  }
+});
+
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 10 * 1024 * 1024, files: 5 },
+  fileFilter: (req, file, cb) => {
+    const allowedMimes = [
+      'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'text/plain'
+    ];
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type'), false);
+    }
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// STEP 4: ADD CHAT SCHEMA (AFTER ANALYTICS SCHEMA)
+// ═════════════════════════════════════════════════════════════════════════════
+
+const chatSchema = new mongoose.Schema({
+  chatId: { type: String, required: true, unique: true },
+  customerId: { type: String, required: true },
+  customerName: { type: String, required: true },
+  customerEmail: { type: String, required: true },
+  subject: { type: String, required: true },
+  department: { type: String, enum: ['Sales', 'Support', 'Technical', 'Billing', 'General'], default: 'General' },
+  priority: { type: String, enum: ['low', 'medium', 'high', 'urgent'], default: 'medium' },
+  status: { type: String, enum: ['open', 'assigned', 'in-progress', 'resolved', 'closed'], default: 'open' },
+  assignedAgent: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  messages: [{
+    messageId: { type: String, required: true },
+    sender: { type: String, enum: ['customer', 'agent', 'system'], required: true },
+    senderId: String,
+    senderName: String,
+    message: String,
+    attachments: [{
+      filename: String,
+      url: String,
+      fileType: String,
+      fileSize: Number
+    }],
+    timestamp: { type: Date, default: Date.now },
+    read: { type: Boolean, default: false }
+  }],
+  tags: [String],
+  rating: { type: Number, min: 1, max: 5 },
+  feedback: String,
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now },
+  closedAt: Date,
+  resolvedAt: Date,
+  firstResponseTime: Number,
+  averageResponseTime: Number,
+  totalMessages: { type: Number, default: 0 }
+});
+
+chatSchema.pre('save', function(next) {
+  this.updatedAt = Date.now();
+  this.totalMessages = this.messages.length;
+  next();
+});
+
+chatSchema.index({ chatId: 1 });
+chatSchema.index({ customerId: 1 });
+chatSchema.index({ status: 1 });
+chatSchema.index({ assignedAgent: 1 });
+
+const Chat = mongoose.model('Chat', chatSchema);
+
+// ═════════════════════════════════════════════════════════════════════════════
+// STEP 5: UPDATE USER SCHEMA - ADD THESE FIELDS TO EXISTING USER SCHEMA
+// ═════════════════════════════════════════════════════════════════════════════
+
+/*
+Add these fields to your existing userSchema:
+*/
+
+// ═════════════════════════════════════════════════════════════════════════════
+// STEP 6: ADD UTILITY FUNCTIONS
+// ═════════════════════════════════════════════════════════════════════════════
+
+function generateChatId() {
+  return 'CHAT-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9).toUpperCase();
+}
+
+function generateMessageId() {
+  return 'MSG-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9).toUpperCase();
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// STEP 7: ADD AGENT AUTHENTICATION MIDDLEWARE
+// ═════════════════════════════════════════════════════════════════════════════
+
+async function authenticateAgent(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ success: false, message: 'Agent token required' });
+  }
+
+  jwt.verify(token, JWT_SECRET, async (err, decoded) => {
+    if (err) {
+      return res.status(403).json({ success: false, message: 'Invalid token' });
+    }
+
+    try {
+      const user = await User.findById(decoded.userId);
+      
+      if (!user || (!user.isAgent && !user.isAdmin)) {
+        return res.status(403).json({ 
+          success: false, 
+          message: 'Agent access required'
+        });
+      }
+
+      if (user.isAgent) {
+        user.lastActivity = new Date();
+        await user.save();
+      }
+
+      req.user = decoded;
+      req.agentUser = user;
+      next();
+    } catch (error) {
+      return res.status(500).json({ success: false, message: 'Authentication failed' });
+    }
+  });
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// STEP 8: ADD AGENT AUTHENTICATION ROUTES
+// ═════════════════════════════════════════════════════════════════════════════
+
+// Agent Login
+app.post('/api/auth/agent/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ success: false, message: 'Email and password required' });
+    }
+
+    const user = await User.findOne({ email: email.toLowerCase() });
+    
+    if (!user || (!user.isAgent && !user.isAdmin)) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Agent access required'
+      });
+    }
+
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      return res.status(401).json({ success: false, message: 'Invalid credentials' });
+    }
+
+    user.lastLogin = new Date();
+    user.lastActivity = new Date();
+    if (user.isAgent && user.agentInfo) {
+      user.agentInfo.status = 'online';
+    }
+    await user.save();
+
+    const token = jwt.sign({ userId: user._id, email: user.email }, JWT_SECRET, { expiresIn: '12h' });
+
+    res.json({
+      success: true,
+      message: 'Agent login successful',
+      token,
+      isAgent: true,
+      isAdmin: user.isAdmin,
+      user: {
+        id: user._id,
+        name: user.fullName,
+        email: user.email,
+        agentInfo: user.agentInfo
+      }
+    });
+  } catch (error) {
+    console.error('❌ Agent login error:', error);
+    res.status(500).json({ success: false, message: 'Login failed' });
+  }
+});
+
+// Verify Agent Token
+app.get('/api/auth/agent/verify', authenticateAgent, async (req, res) => {
+  res.json({
+    success: true,
+    isAgent: true,
+    isAdmin: req.agentUser.isAdmin,
+    user: {
+      id: req.agentUser._id,
+      name: req.agentUser.fullName,
+      email: req.agentUser.email,
+      agentInfo: req.agentUser.agentInfo
+    }
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// STEP 9: ADD CHAT API ENDPOINTS
+// ═════════════════════════════════════════════════════════════════════════════
+
+// Start New Chat (Customer)
+app.post('/api/chat/start', async (req, res) => {
+  try {
+    const { customerName, customerEmail, subject, department, priority } = req.body;
+
+    if (!customerName || !customerEmail || !subject) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Customer name, email, and subject required' 
+      });
+    }
+
+    const chatId = generateChatId();
+    const customerId = customerEmail; // Using email as customer ID
+
+    const chat = new Chat({
+      chatId,
+      customerId,
+      customerName,
+      customerEmail,
+      subject,
+      department: department || 'General',
+      priority: priority || 'medium',
+      status: 'open',
+      messages: [{
+        messageId: generateMessageId(),
+        sender: 'system',
+        senderId: 'system',
+        senderName: 'System',
+        message: `Chat started by ${customerName}. Subject: ${subject}`,
+        timestamp: new Date()
+      }]
+    });
+
+    await chat.save();
+
+    console.log(`✅ Chat started: ${chatId}`);
+
+    res.status(201).json({
+      success: true,
+      message: 'Chat started successfully',
+      chat: {
+        chatId: chat.chatId,
+        customerId: chat.customerId,
+        customerName: chat.customerName,
+        subject: chat.subject,
+        department: chat.department,
+        status: chat.status,
+        createdAt: chat.createdAt
+      }
+    });
+  } catch (error) {
+    console.error('❌ Start chat error:', error);
+    res.status(500).json({ success: false, message: 'Failed to start chat' });
+  }
+});
+
+// Get Chat Details
+app.get('/api/chat/:chatId', async (req, res) => {
+  try {
+    const { chatId } = req.params;
+
+    const chat = await Chat.findOne({ chatId }).populate('assignedAgent', 'fullName email agentInfo');
+
+    if (!chat) {
+      return res.status(404).json({ success: false, message: 'Chat not found' });
+    }
+
+    res.json({
+      success: true,
+      chat: {
+        chatId: chat.chatId,
+        customerId: chat.customerId,
+        customerName: chat.customerName,
+        customerEmail: chat.customerEmail,
+        subject: chat.subject,
+        department: chat.department,
+        priority: chat.priority,
+        status: chat.status,
+        assignedAgent: chat.assignedAgent,
+        messages: chat.messages,
+        createdAt: chat.createdAt,
+        updatedAt: chat.updatedAt
+      }
+    });
+  } catch (error) {
+    console.error('❌ Get chat error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch chat' });
+  }
+});
+
+// Send Message
+app.post('/api/chat/:chatId/send', async (req, res) => {
+  try {
+    const { chatId } = req.params;
+    const { sender, senderId, senderName, message } = req.body;
+
+    if (!sender || !message) {
+      return res.status(400).json({ success: false, message: 'Sender and message required' });
+    }
+
+    const chat = await Chat.findOne({ chatId });
+    if (!chat) {
+      return res.status(404).json({ success: false, message: 'Chat not found' });
+    }
+
+    const newMessage = {
+      messageId: generateMessageId(),
+      sender,
+      senderId: senderId || chat.customerId,
+      senderName: senderName || chat.customerName,
+      message,
+      timestamp: new Date(),
+      read: false
+    };
+
+    chat.messages.push(newMessage);
+    await chat.save();
+
+    // Broadcast via WebSocket
+    broadcastToChat(chatId, {
+      type: 'new_message',
+      message: newMessage
+    });
+
+    res.json({
+      success: true,
+      message: 'Message sent',
+      messageData: newMessage
+    });
+  } catch (error) {
+    console.error('❌ Send message error:', error);
+    res.status(500).json({ success: false, message: 'Failed to send message' });
+  }
+});
+
+// Upload File in Chat
+app.post('/api/chat/upload', upload.array('files', 5), async (req, res) => {
+  try {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ success: false, message: 'No files uploaded' });
+    }
+
+    const uploadedFiles = req.files.map(file => ({
+      filename: file.originalname,
+      url: `${BASE_URL}/uploads/${file.filename}`,
+      fileType: file.mimetype,
+      fileSize: file.size
+    }));
+
+    res.json({
+      success: true,
+      message: 'Files uploaded successfully',
+      files: uploadedFiles
+    });
+  } catch (error) {
+    console.error('❌ Upload error:', error);
+    res.status(500).json({ success: false, message: 'Upload failed' });
+  }
+});
+
+// Mark Messages as Read
+app.post('/api/chat/:chatId/read', async (req, res) => {
+  try {
+    const { chatId } = req.params;
+    const { messageIds } = req.body;
+
+    const chat = await Chat.findOne({ chatId });
+    if (!chat) {
+      return res.status(404).json({ success: false, message: 'Chat not found' });
+    }
+
+    chat.messages.forEach(msg => {
+      if (messageIds.includes(msg.messageId)) {
+        msg.read = true;
+      }
+    });
+
+    await chat.save();
+
+    res.json({ success: true, message: 'Messages marked as read' });
+  } catch (error) {
+    console.error('❌ Mark read error:', error);
+    res.status(500).json({ success: false, message: 'Failed to mark as read' });
+  }
+});
+
+// End Chat
+app.post('/api/chat/:chatId/end', async (req, res) => {
+  try {
+    const { chatId } = req.params;
+    const { rating, feedback } = req.body;
+
+    const chat = await Chat.findOne({ chatId });
+    if (!chat) {
+      return res.status(404).json({ success: false, message: 'Chat not found' });
+    }
+
+    chat.status = 'closed';
+    chat.closedAt = new Date();
+    if (rating) chat.rating = rating;
+    if (feedback) chat.feedback = feedback;
+
+    await chat.save();
+
+    // Broadcast via WebSocket
+    broadcastToChat(chatId, {
+      type: 'chat_closed',
+      chatId: chatId
+    });
+
+    res.json({
+      success: true,
+      message: 'Chat ended successfully'
+    });
+  } catch (error) {
+    console.error('❌ End chat error:', error);
+    res.status(500).json({ success: false, message: 'Failed to end chat' });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// STEP 10: ADD AGENT DASHBOARD ENDPOINTS
+// ═════════════════════════════════════════════════════════════════════════════
+
+// Get All Chats (Agent)
+app.get('/api/agent/chats', authenticateAgent, async (req, res) => {
+  try {
+    const { status, department } = req.query;
+    
+    let query = {};
+    
+    // If not admin, only show assigned chats
+    if (!req.agentUser.isAdmin) {
+      query.assignedAgent = req.agentUser._id;
+    }
+    
+    if (status) query.status = status;
+    if (department) query.department = department;
+
+    const chats = await Chat.find(query)
+      .populate('assignedAgent', 'fullName email')
+      .sort({ updatedAt: -1 })
+      .limit(100);
+
+    res.json({
+      success: true,
+      count: chats.length,
+      chats: chats.map(chat => ({
+        chatId: chat.chatId,
+        customerName: chat.customerName,
+        subject: chat.subject,
+        department: chat.department,
+        priority: chat.priority,
+        status: chat.status,
+        assignedAgent: chat.assignedAgent,
+        totalMessages: chat.totalMessages,
+        createdAt: chat.createdAt,
+        updatedAt: chat.updatedAt
+      }))
+    });
+  } catch (error) {
+    console.error('❌ Get chats error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch chats' });
+  }
+});
+
+// Assign Chat to Agent (Admin)
+app.post('/api/agent/chats/:chatId/assign', authenticateAdmin, async (req, res) => {
+  try {
+    const { chatId } = req.params;
+    const { agentId } = req.body;
+
+    const chat = await Chat.findOne({ chatId });
+    if (!chat) {
+      return res.status(404).json({ success: false, message: 'Chat not found' });
+    }
+
+    const agent = await User.findById(agentId);
+    if (!agent || (!agent.isAgent && !agent.isAdmin)) {
+      return res.status(400).json({ success: false, message: 'Invalid agent' });
+    }
+
+    chat.assignedAgent = agentId;
+    chat.status = 'assigned';
+    
+    // Add system message
+    chat.messages.push({
+      messageId: generateMessageId(),
+      sender: 'system',
+      senderId: 'system',
+      senderName: 'System',
+      message: `Chat assigned to agent: ${agent.fullName}`,
+      timestamp: new Date()
+    });
+
+    await chat.save();
+
+    // Notify agent via WebSocket
+    sendToAgent(agentId.toString(), {
+      type: 'chat_assigned',
+      chat: {
+        chatId: chat.chatId,
+        customerName: chat.customerName,
+        subject: chat.subject
+      }
+    });
+
+    res.json({
+      success: true,
+      message: 'Chat assigned successfully'
+    });
+  } catch (error) {
+    console.error('❌ Assign chat error:', error);
+    res.status(500).json({ success: false, message: 'Failed to assign chat' });
+  }
+});
+
+// Update Agent Status
+app.put('/api/agent/status', authenticateAgent, async (req, res) => {
+  try {
+    const { status } = req.body;
+
+    if (!['online', 'offline', 'busy', 'away'].includes(status)) {
+      return res.status(400).json({ success: false, message: 'Invalid status' });
+    }
+
+    const agent = await User.findById(req.agentUser._id);
+    if (agent.agentInfo) {
+      agent.agentInfo.status = status;
+      await agent.save();
+    }
+
+    res.json({
+      success: true,
+      message: 'Status updated',
+      status: status
+    });
+  } catch (error) {
+    console.error('❌ Update status error:', error);
+    res.status(500).json({ success: false, message: 'Failed to update status' });
+  }
+});
+
+// Get Agent Stats
+app.get('/api/agent/stats', authenticateAgent, async (req, res) => {
+  try {
+    const agentId = req.agentUser._id;
+
+    const totalChats = await Chat.countDocuments({ assignedAgent: agentId });
+    const openChats = await Chat.countDocuments({ assignedAgent: agentId, status: 'open' });
+    const inProgressChats = await Chat.countDocuments({ assignedAgent: agentId, status: 'in-progress' });
+    const resolvedChats = await Chat.countDocuments({ assignedAgent: agentId, status: 'resolved' });
+
+    res.json({
+      success: true,
+      stats: {
+        totalChats,
+        openChats,
+        inProgressChats,
+        resolvedChats,
+        activeChats: openChats + inProgressChats
+      }
+    });
+  } catch (error) {
+    console.error('❌ Get stats error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch stats' });
+  }
+});
 
 // ========== END OF PART 5 ==========
 // Continue to Part 6 for Server Startup & Documentation// ========== UYEH TECH SERVER v6.0 - PART 6 OF 6 (FINAL) ==========
@@ -2640,7 +3368,7 @@ console.log('✅ Part 5 loaded: Blog Management & System Settings configured');
 // COPY THIS AFTER PART 5
 
 // ========== START SERVER ==========
-app.listen(PORT, () => {
+ server.listen(PORT, () => {
   console.log('\n╔═══════════════════════════════════════════════════════════════╗');
   console.log('║   🚀 UYEH TECH SERVER v6.0 - READY WITH DOWNLOAD LINKS     ║');
   console.log('╚═══════════════════════════════════════════════════════════════╝\n');
@@ -2770,8 +3498,31 @@ app.listen(PORT, () => {
   console.log('════════════════════════════════════════════════════════════════');
   console.log('  Seed Coupons:  POST /api/coupons/seed');
   console.log('  Seed Products: POST /api/admin/products/seed-with-downloads\n');
+
+  console.log('💬 CHAT & SUPPORT (NEW v7.0):');
+  console.log('  POST   /api/chat/start               - Start new chat');
+  console.log('  GET    /api/chat/:chatId             - Get chat details');
+  console.log('  POST   /api/chat/:chatId/send        - Send message');
+  console.log('  POST   /api/chat/upload              - Upload file');
+  console.log('  POST   /api/chat/:chatId/read        - Mark messages read');
+  console.log('  POST   /api/chat/:chatId/end         - End chat\n');
   
-  console.log('✅ Server ready to accept connections!\n');
+  console.log('👨‍💼 AGENT DASHBOARD (NEW v7.0):');
+  console.log('  POST   /api/auth/agent/login         - Agent login');
+  console.log('  GET    /api/auth/agent/verify        - Verify agent token');
+  console.log('  GET    /api/agent/chats              - Get all chats');
+  console.log('  POST   /api/agent/chats/:chatId/assign - Assign chat');
+  console.log('  PUT    /api/agent/status             - Update agent status');
+  console.log('  GET    /api/agent/stats              - Get agent stats\n');
+  
+  console.log('🔌 WEBSOCKET:');
+  console.log(`  ws://localhost:${PORT}/ws?chatId=XXX  - Connect to chat`);
+  console.log(`  Active Connections: ${wss.clients.size}\n`);
+  
+
+console.log('\n✅ v7.0 Features Added: Chat System, WebSocket, Agent Dashboard, File Upload');
+console.log('🎉 UYEH TECH SERVER v7.0 - FULLY UPGRADED!\n');
+console.log('✅ Server ready to accept connections!\n');
 });
 
 // ========== ERROR HANDLING ==========
