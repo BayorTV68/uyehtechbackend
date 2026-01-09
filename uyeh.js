@@ -274,7 +274,6 @@ const upload = multer({
   },
   fileFilter: fileFilter
 });
-
 // ═════════════════════════════════════════════════════════════════════════════
 // ENVIRONMENT CONFIGURATION
 // ═════════════════════════════════════════════════════════════════════════════
@@ -408,21 +407,17 @@ userSchema.index({ createdAt: -1 });
 
 const User = mongoose.model('User', userSchema);
 
-// ──────────────────────────────────────────────────────────────────────────────
-// ORDER SCHEMA
-// ──────────────────────────────────────────────────────────────────────────────
 
+// ========== ORDER SCHEMA ==========
 const orderSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   orderReference: { type: String, required: true, unique: true },
   items: [{
     id: String,
-    productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
     title: String,
     category: String,
     price: Number,
-    icon: String,
-    downloadLink: String
+    icon: String
   }],
   subtotal: { type: Number, required: true },
   discount: { type: Number, default: 0 },
@@ -439,12 +434,10 @@ const orderSchema = new mongoose.Schema({
     transactionId: String,
     transactionRef: String,
     status: { type: String, enum: ['pending', 'successful', 'failed'], default: 'pending' },
-    paidAt: Date,
-    currency: { type: String, default: 'USD' }
+    paidAt: Date
   },
   status: { type: String, enum: ['pending', 'completed', 'failed', 'refunded'], default: 'pending' },
   downloadLinks: [String],
-  notes: String,
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });
@@ -454,18 +447,9 @@ orderSchema.pre('save', function(next) {
   next();
 });
 
-orderSchema.index({ userId: 1 });
-orderSchema.index({ orderReference: 1 });
-orderSchema.index({ 'paymentInfo.status': 1 });
-orderSchema.index({ status: 1 });
-orderSchema.index({ createdAt: -1 });
-
 const Order = mongoose.model('Order', orderSchema);
 
-// ──────────────────────────────────────────────────────────────────────────────
-// PAYMENT METHOD SCHEMA
-// ──────────────────────────────────────────────────────────────────────────────
-
+// ========== PAYMENT METHOD SCHEMA ==========
 const paymentMethodSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   type: { type: String, required: true, enum: ['Visa', 'Mastercard', 'American Express', 'Discover', 'Credit Card'] },
@@ -476,14 +460,9 @@ const paymentMethodSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 
-paymentMethodSchema.index({ userId: 1 });
-
 const PaymentMethod = mongoose.model('PaymentMethod', paymentMethodSchema);
 
-// ──────────────────────────────────────────────────────────────────────────────
-// COUPON SCHEMA
-// ──────────────────────────────────────────────────────────────────────────────
-
+// ========== COUPON SCHEMA ==========
 const couponSchema = new mongoose.Schema({
   code: { type: String, required: true, unique: true, uppercase: true, trim: true },
   discount: { type: Number, required: true, min: 0 },
@@ -493,22 +472,15 @@ const couponSchema = new mongoose.Schema({
   usageCount: { type: Number, default: 0 },
   expiresAt: { type: Date, default: null },
   minPurchaseAmount: { type: Number, default: 0 },
-  maxDiscountAmount: { type: Number, default: null }, // NEW: Max discount cap
-  applicableCategories: [String], // NEW: Limit to specific categories
   description: { type: String, default: '' },
-  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   createdAt: { type: Date, default: Date.now }
 });
 
 couponSchema.index({ code: 1 });
-couponSchema.index({ isActive: 1 });
 
 const Coupon = mongoose.model('Coupon', couponSchema);
 
-// ──────────────────────────────────────────────────────────────────────────────
-// PRODUCT SCHEMA (WITH DOWNLOAD LINKS)
-// ──────────────────────────────────────────────────────────────────────────────
-
+// ========== PRODUCT SCHEMA (WITH DOWNLOAD LINKS) ==========
 const productSchema = new mongoose.Schema({
   title: { type: String, required: true, trim: true },
   description: { type: String, required: true },
@@ -519,7 +491,7 @@ const productSchema = new mongoose.Schema({
   image: String,
   images: [String],
   features: [String],
-  downloadLink: { type: String, default: '' },
+  downloadLink: { type: String, default: '' }, // DOWNLOAD LINK FIELD
   fileSize: String,
   version: String,
   requirements: [String],
@@ -542,33 +514,70 @@ productSchema.pre('save', function(next) {
   next();
 });
 
-productSchema.index({ title: 'text', description: 'text', tags: 'text' });
-productSchema.index({ category: 1 });
-productSchema.index({ isActive: 1 });
-productSchema.index({ isFeatured: 1 });
-productSchema.index({ createdAt: -1 });
-
 const Product = mongoose.model('Product', productSchema);
 
-// ──────────────────────────────────────────────────────────────────────────────
-// DOWNLOAD TRACKING SCHEMA
-// ──────────────────────────────────────────────────────────────────────────────
-
+// ========== DOWNLOAD TRACKING SCHEMA (NEW) ==========
 const downloadSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
   orderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Order', required: true },
   downloadedAt: { type: Date, default: Date.now },
   ipAddress: String,
-  userAgent: String,
-  deviceInfo: String // NEW: Store device information
+  userAgent: String
 });
 
 downloadSchema.index({ userId: 1, productId: 1 });
 downloadSchema.index({ downloadedAt: -1 });
-downloadSchema.index({ orderId: 1 });
 
 const Download = mongoose.model('Download', downloadSchema);
+
+// ========== BLOG POST SCHEMA ==========
+const blogPostSchema = new mongoose.Schema({
+  title: { type: String, required: true, trim: true },
+  slug: { type: String, required: true, unique: true, lowercase: true, trim: true },
+  excerpt: { type: String, required: true, maxlength: 300 },
+  content: { type: String, required: true },
+  featuredImage: { type: String, default: '' },
+  author: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  category: { type: String, required: true, enum: ['Technology', 'Business', 'Tutorial', 'News', 'Product', 'Design', 'Marketing', 'Development', 'Other'] },
+  tags: [{ type: String, trim: true }],
+  status: { type: String, enum: ['draft', 'published', 'archived'], default: 'draft' },
+  views: { type: Number, default: 0 },
+  likes: { type: Number, default: 0 },
+  comments: [{
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    userName: String,
+    userEmail: String,
+    comment: String,
+    createdAt: { type: Date, default: Date.now },
+    approved: { type: Boolean, default: false }
+  }],
+  metaTitle: String,
+  metaDescription: String,
+  metaKeywords: [String],
+  publishedAt: Date,
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
+});
+
+blogPostSchema.index({ slug: 1 });
+blogPostSchema.index({ status: 1 });
+blogPostSchema.index({ category: 1 });
+blogPostSchema.index({ publishedAt: -1 });
+
+blogPostSchema.pre('save', function(next) {
+  this.updatedAt = Date.now();
+  if (!this.slug && this.title) {
+    this.slug = this.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  }
+  if (this.status === 'published' && !this.publishedAt) {
+    this.publishedAt = Date.now();
+  }
+  next();
+});
+
+const BlogPost = mongoose.model('BlogPost', blogPostSchema);
+
 
 // ──────────────────────────────────────────────────────────────────────────────
 // CHAT/SUPPORT TICKET SCHEMA (NEW)
@@ -626,58 +635,6 @@ chatSchema.index({ department: 1 });
 chatSchema.index({ createdAt: -1 });
 
 const Chat = mongoose.model('Chat', chatSchema);
-
-// ──────────────────────────────────────────────────────────────────────────────
-// BLOG POST SCHEMA
-// ──────────────────────────────────────────────────────────────────────────────
-
-const blogPostSchema = new mongoose.Schema({
-  title: { type: String, required: true, trim: true },
-  slug: { type: String, required: true, unique: true, lowercase: true, trim: true },
-  excerpt: { type: String, required: true, maxlength: 300 },
-  content: { type: String, required: true },
-  featuredImage: { type: String, default: '' },
-  author: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  category: { type: String, required: true, enum: ['Technology', 'Business', 'Tutorial', 'News', 'Product', 'Design', 'Marketing', 'Development', 'Other'] },
-  tags: [{ type: String, trim: true }],
-  status: { type: String, enum: ['draft', 'published', 'archived'], default: 'draft' },
-  views: { type: Number, default: 0 },
-  likes: { type: Number, default: 0 },
-  comments: [{
-    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    userName: String,
-    userEmail: String,
-    comment: String,
-    createdAt: { type: Date, default: Date.now },
-    approved: { type: Boolean, default: false }
-  }],
-  metaTitle: String,
-  metaDescription: String,
-  metaKeywords: [String],
-  publishedAt: Date,
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now }
-});
-
-blogPostSchema.pre('save', function(next) {
-  this.updatedAt = Date.now();
-  if (!this.slug && this.title) {
-    this.slug = this.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-  }
-  if (this.status === 'published' && !this.publishedAt) {
-    this.publishedAt = Date.now();
-  }
-  next();
-});
-
-blogPostSchema.index({ slug: 1 });
-blogPostSchema.index({ status: 1 });
-blogPostSchema.index({ category: 1 });
-blogPostSchema.index({ publishedAt: -1 });
-blogPostSchema.index({ title: 'text', content: 'text', excerpt: 'text' });
-
-const BlogPost = mongoose.model('BlogPost', blogPostSchema);
-
 // ──────────────────────────────────────────────────────────────────────────────
 // SYSTEM SETTINGS SCHEMA
 // ──────────────────────────────────────────────────────────────────────────────
@@ -727,7 +684,6 @@ const systemSettingsSchema = new mongoose.Schema({
 });
 
 const SystemSettings = mongoose.model('SystemSettings', systemSettingsSchema);
-
 // ──────────────────────────────────────────────────────────────────────────────
 // ANALYTICS SCHEMA
 // ──────────────────────────────────────────────────────────────────────────────
@@ -758,12 +714,12 @@ analyticsSchema.index({ date: -1 });
 
 const Analytics = mongoose.model('Analytics', analyticsSchema);
 
+
+// ========== EMAIL OTP STORAGE ==========
+const otpStore = new Map();
 // ═════════════════════════════════════════════════════════════════════════════
 // UTILITY FUNCTIONS
 // ═════════════════════════════════════════════════════════════════════════════
-
-// Email OTP storage (in-memory)
-const otpStore = new Map();
 
 function generateToken() {
   return crypto.randomBytes(32).toString('hex');
@@ -832,28 +788,17 @@ global.app = app;
 global.server = server;
 global.upload = upload;
 
+
 console.log('\n✅ Part 1 Loaded: Schemas, Configuration & WebSocket Ready');
 console.log('📦 Models: User, Order, Coupon, Product, Download, Chat, Blog, Analytics, Settings');
 console.log('🔌 WebSocket: Ready for real-time chat connections\n');
 
-// ═════════════════════════════════════════════════════════════════════════════
-// END OF PART 1 - Continue to Part 2 for Email & Authentication
-// ═════════════════════════════════════════════════════════════════════════════
-// ╔═══════════════════════════════════════════════════════════════════════════╗
-// ║                    UYEH TECH BACKEND SERVER v7.0                         ║
-// ║                          PART 2 OF 7                                      ║
-// ║                Email Functions & Authentication Routes                    ║
-// ╚═══════════════════════════════════════════════════════════════════════════╝
-//
+// ========== END OF PART 1 ==========
+// Continue to Part 2 for Email Functions and Auth Routes// ========== UYEH TECH SERVER v6.0 - PART 2 OF 6 ==========
+// Email Functions and Authentication Routes
 // COPY THIS AFTER PART 1
-//
-// ═════════════════════════════════════════════════════════════════════════════
 
-// ═════════════════════════════════════════════════════════════════════════════
-// EMAIL FUNCTIONS
-// ═════════════════════════════════════════════════════════════════════════════
-
-// Send Email OTP for verification or password reset
+// ========== SEND EMAIL WITH OTP ==========
 async function sendEmailOTP(to, otp, purpose = 'verification') {
   try {
     console.log(`\n📧 Sending ${purpose} OTP to ${to}`);
@@ -861,7 +806,7 @@ async function sendEmailOTP(to, otp, purpose = 'verification') {
    
     if (!TERMII_API_KEY) {
       console.error('❌ TERMII_API_KEY not configured');
-      console.log(`📧 OTP for ${to}: ${otp} (Logged to console - Email service disabled)`);
+      console.log(`📧 OTP for ${to}: ${otp}`);
       return { success: true, method: 'console_log', otp };
     }
    
@@ -869,44 +814,10 @@ async function sendEmailOTP(to, otp, purpose = 'verification') {
    
     if (purpose === 'verification') {
       subject = 'Verify Your Email - UYEH TECH';
-      emailBody = `
-Hello!
-
-Your UYEH TECH email verification code is: ${otp}
-
-This code is valid for 10 minutes.
-
-If you didn't request this code, please ignore this email.
-
-Best regards,
-UYEH TECH Team
-      `.trim();
+      emailBody = `Your UYEH TECH verification code is: ${otp}\n\nValid for 10 minutes.\n\nBest regards,\nUYEH TECH Team`;
     } else if (purpose === 'password-reset') {
       subject = 'Password Reset Code - UYEH TECH';
-      emailBody = `
-Hello!
-
-Your UYEH TECH password reset code is: ${otp}
-
-This code is valid for 10 minutes.
-
-If you didn't request this code, please ignore this email and your password will remain unchanged.
-
-Best regards,
-UYEH TECH Team
-      `.trim();
-    } else if (purpose === 'chat-notification') {
-      subject = 'New Chat Message - UYEH TECH Support';
-      emailBody = `
-Hello!
-
-You have received a new message in your support chat.
-
-Please login to your account to view and respond to the message.
-
-Best regards,
-UYEH TECH Support Team
-      `.trim();
+      emailBody = `Your password reset code is: ${otp}\n\nValid for 10 minutes.\n\nBest regards,\nUYEH TECH Team`;
     }
 
     try {
@@ -924,56 +835,41 @@ UYEH TECH Support Team
         timeout: 15000
       });
      
-      console.log('✅ Email sent successfully via Termii');
+      console.log('✅ Email sent via Termii');
       return { success: true, method: 'termii_email', data: response.data };
      
     } catch (termiiError) {
-      console.error('❌ Termii error:', termiiError.response?.data || termiiError.message);
-      console.log(`📧 OTP for ${to}: ${otp} (Logged - Termii failed)`);
+      console.error('❌ Termii error:', termiiError.message);
+      console.log(`📧 OTP for ${to}: ${otp}`);
       return { success: true, method: 'console_log', otp };
     }
    
   } catch (error) {
     console.error('❌ Send Email Error:', error);
-    console.log(`📧 OTP for ${to}: ${otp} (Logged - Error occurred)`);
+    console.log(`📧 OTP for ${to}: ${otp}`);
     return { success: false, error: error.message, otp };
   }
 }
 
-// Send Order Confirmation Email with Download Links
+// ========== SEND ORDER CONFIRMATION WITH DOWNLOAD LINKS ==========
 async function sendOrderConfirmationEmail(to, orderData) {
   try {
-    console.log(`\n📧 Sending order confirmation to ${to}`);
-    
     if (!TERMII_API_KEY) {
-      console.log(`📧 Order confirmation for ${to}: ${orderData.orderReference} (Email service disabled)`);
+      console.log(`📧 Order confirmation for ${to}: ${orderData.orderReference}`);
       return { success: true, method: 'console_log' };
     }
    
     const subject = `Order Confirmation - ${orderData.orderReference}`;
-    const itemsList = orderData.items.map(item => `  • ${item.title} - $${item.price}`).join('\n');
-    
     const emailBody = `
-Thank you for your purchase from UYEH TECH!
+Thank you for your purchase!
 
 Order Reference: ${orderData.orderReference}
-Order Date: ${new Date(orderData.createdAt).toLocaleDateString()}
-
-Items Purchased:
-${itemsList}
-
-Subtotal: $${orderData.subtotal}
-${orderData.discount > 0 ? `Discount: -$${orderData.discount}` : ''}
 Total Amount: $${orderData.total}
 
+Items: ${orderData.items.map(i => `\n- ${i.title} ($${i.price})`).join('')}
+
 Your digital products are ready for download!
-
-To access your downloads:
-1. Log in to your UYEH TECH account
-2. Go to "My Orders" section
-3. Click on this order to view download links
-
-Need help? Contact us at ${TERMII_SENDER_EMAIL}
+Access your downloads from your account dashboard.
 
 Best regards,
 UYEH TECH Team
@@ -992,11 +888,11 @@ UYEH TECH Team
         timeout: 15000
       });
      
-      console.log('✅ Order confirmation sent successfully');
+      console.log('✅ Order confirmation sent');
       return { success: true, method: 'termii_email' };
      
     } catch (error) {
-      console.log(`📧 Order confirmation logged: ${orderData.orderReference} (Termii failed)`);
+      console.log(`📧 Order confirmation logged: ${orderData.orderReference}`);
       return { success: true, method: 'console_log' };
     }
    
@@ -1005,6 +901,7 @@ UYEH TECH Team
     return { success: false, error: error.message };
   }
 }
+
 
 // Send Chat Assignment Notification to Agent
 async function sendAgentAssignmentEmail(agentEmail, chatInfo) {
@@ -1064,11 +961,8 @@ global.sendEmailOTP = sendEmailOTP;
 global.sendOrderConfirmationEmail = sendOrderConfirmationEmail;
 global.sendAgentAssignmentEmail = sendAgentAssignmentEmail;
 
-// ═════════════════════════════════════════════════════════════════════════════
-// AUTHENTICATION MIDDLEWARE
-// ═════════════════════════════════════════════════════════════════════════════
 
-// Authenticate JWT Token
+// ========== MIDDLEWARE: AUTHENTICATE TOKEN ==========
 function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -1079,25 +973,25 @@ function authenticateToken(req, res, next) {
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) {
-      return res.status(403).json({ success: false, message: 'Invalid or expired token' });
+      return res.status(403).json({ success: false, message: 'Invalid token' });
     }
     req.user = user;
     next();
   });
 }
 
-// Authenticate Admin
+// ========== MIDDLEWARE: AUTHENTICATE ADMIN ==========
 async function authenticateAdmin(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
   if (!token) {
-    return res.status(401).json({ success: false, message: 'Admin token required' });
+    return res.status(401).json({ success: false, message: 'Token required' });
   }
 
   jwt.verify(token, JWT_SECRET, async (err, decoded) => {
     if (err) {
-      return res.status(403).json({ success: false, message: 'Invalid or expired token' });
+      return res.status(403).json({ success: false, message: 'Invalid token' });
     }
 
     try {
@@ -1115,8 +1009,7 @@ async function authenticateAdmin(req, res, next) {
       req.adminUser = user;
       next();
     } catch (error) {
-      console.error('❌ Admin auth error:', error);
-      return res.status(500).json({ success: false, message: 'Authentication failed' });
+      return res.status(500).json({ success: false, message: 'Auth failed' });
     }
   });
 }
@@ -1167,14 +1060,12 @@ global.authenticateToken = authenticateToken;
 global.authenticateAdmin = authenticateAdmin;
 global.authenticateAgent = authenticateAgent;
 
-// ═════════════════════════════════════════════════════════════════════════════
-// ROOT ROUTE
-// ═════════════════════════════════════════════════════════════════════════════
 
+// ========== ROUTES ==========
 app.get('/', (req, res) => {
   res.json({
-    message: '🚀 UYEH TECH API v7.0 - Complete System',
-    version: '7.0.0',
+    message: '🚀 UYEH TECH API v6.0 - Admin Dashboard + Downloads',
+    version: '6.0.0',
     status: 'active',
     adminEmail: ADMIN_EMAIL,
     features: [
@@ -1194,16 +1085,6 @@ app.get('/', (req, res) => {
       '✅ Payment Integration (Flutterwave)',
       '✅ Email Notifications (Termii)'
     ],
-    endpoints: {
-      auth: '/api/auth/*',
-      admin: '/api/admin/*',
-      chat: '/api/chat/*',
-      agent: '/api/agent/*',
-      orders: '/api/orders/*',
-      products: '/api/products/*',
-      blog: '/api/blog/*',
-      websocket: 'ws://localhost:' + PORT + '/ws'
-    }
   });
 });
 
@@ -2018,26 +1899,14 @@ console.log('\n✅ Part 2 Loaded: Email Functions & Authentication Routes Ready'
 console.log('🔐 Auth Endpoints: Signup, Login, OTP, Password Reset, Admin, Agent');
 console.log('👤 Profile Endpoints: Get/Update Profile, Notifications, Payment Methods\n');
 
-// ═════════════════════════════════════════════════════════════════════════════
-// END OF PART 2 - Continue to Part 3 for Admin Dashboard & User Management
-// ═════════════════════════════════════════════════════════════════════════════
-// ╔═══════════════════════════════════════════════════════════════════════════╗
-// ║                    UYEH TECH BACKEND SERVER v7.0                         ║
-// ║                          PART 3 OF 7                                      ║
-// ║          Admin Dashboard, Analytics & User Management                    ║
-// ╚═══════════════════════════════════════════════════════════════════════════╝
-//
+// ========== END OF PART 2 ==========
+// Continue to Part 3 for Admin Dashboard & Analytics// ========== UYEH TECH SERVER v6.0 - PART 3 OF 6 ==========
+// Admin Dashboard, Analytics & User Management
 // COPY THIS AFTER PART 2
-//
-// ═════════════════════════════════════════════════════════════════════════════
 
-// ═════════════════════════════════════════════════════════════════════════════
-// ADMIN DASHBOARD OVERVIEW
-// ═════════════════════════════════════════════════════════════════════════════
-
+// ========== ADMIN DASHBOARD OVERVIEW ==========
 app.get('/api/admin/dashboard', authenticateAdmin, async (req, res) => {
   try {
-    // Count totals
     const totalUsers = await User.countDocuments();
     const totalOrders = await Order.countDocuments();
     const totalProducts = await Product.countDocuments();
@@ -2124,10 +1993,7 @@ app.get('/api/admin/dashboard', authenticateAdmin, async (req, res) => {
   }
 });
 
-// ═════════════════════════════════════════════════════════════════════════════
-// ADMIN ANALYTICS
-// ═════════════════════════════════════════════════════════════════════════════
-
+// ========== ADMIN ANALYTICS ==========
 app.get('/api/admin/analytics', authenticateAdmin, async (req, res) => {
   try {
     const { period = '7d' } = req.query;
@@ -2135,7 +2001,6 @@ app.get('/api/admin/analytics', authenticateAdmin, async (req, res) => {
     let startDate;
     const now = new Date();
     
-    // Calculate start date based on period
     switch(period) {
       case '24h':
         startDate = new Date(now - 24 * 60 * 60 * 1000);
@@ -2148,9 +2013,6 @@ app.get('/api/admin/analytics', authenticateAdmin, async (req, res) => {
         break;
       case '90d':
         startDate = new Date(now - 90 * 24 * 60 * 60 * 1000);
-        break;
-      case '1y':
-        startDate = new Date(now - 365 * 24 * 60 * 60 * 1000);
         break;
       default:
         startDate = new Date(now - 7 * 24 * 60 * 60 * 1000);
@@ -2178,16 +2040,6 @@ app.get('/api/admin/analytics', authenticateAdmin, async (req, res) => {
       { $sort: { _id: 1 } }
     ]);
 
-    // Download trends
-    const downloadTrends = await Download.aggregate([
-      { $match: { downloadedAt: { $gte: startDate } } },
-      { $group: {
-        _id: { $dateToString: { format: '%Y-%m-%d', date: '$downloadedAt' } },
-        count: { $sum: 1 }
-      }},
-      { $sort: { _id: 1 } }
-    ]);
-
     // Chat trends (NEW v7.0)
     const chatTrends = await Chat.aggregate([
       { $match: { createdAt: { $gte: startDate } } },
@@ -2195,6 +2047,16 @@ app.get('/api/admin/analytics', authenticateAdmin, async (req, res) => {
         _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
         count: { $sum: 1 },
         resolved: { $sum: { $cond: [{ $eq: ['$status', 'resolved'] }, 1, 0] } }
+      }},
+      { $sort: { _id: 1 } }
+    ]);
+
+    // Download trends
+    const downloadTrends = await Download.aggregate([
+      { $match: { downloadedAt: { $gte: startDate } } },
+      { $group: {
+        _id: { $dateToString: { format: '%Y-%m-%d', date: '$downloadedAt' } },
+        count: { $sum: 1 }
       }},
       { $sort: { _id: 1 } }
     ]);
@@ -2265,9 +2127,8 @@ app.get('/api/admin/analytics', authenticateAdmin, async (req, res) => {
   }
 });
 
-// ═════════════════════════════════════════════════════════════════════════════
-// USER MANAGEMENT
-// ═════════════════════════════════════════════════════════════════════════════
+
+// ========== USER MANAGEMENT ==========
 
 // Get All Users (with pagination and search)
 app.get('/api/admin/users', authenticateAdmin, async (req, res) => {
@@ -2561,27 +2422,7 @@ app.put('/api/admin/users/:userId/demote-agent', authenticateAdmin, async (req, 
   }
 });
 
-console.log('\n✅ Part 3 Loaded: Admin Dashboard, Analytics & User Management Ready');
-console.log('📊 Endpoints: Dashboard, Analytics, User CRUD, Agent Promotion\n');
-
-// ═════════════════════════════════════════════════════════════════════════════
-// END OF PART 3 - Continue to Part 4 for Orders, Products & Downloads
-// ═════════════════════════════════════════════════════════════════════════════
-// ╔═══════════════════════════════════════════════════════════════════════════╗
-// ║                    UYEH TECH BACKEND SERVER v7.0                         ║
-// ║                          PART 4 OF 7                                      ║
-// ║      Orders, Products, Downloads & Coupon Management                     ║
-// ╚═══════════════════════════════════════════════════════════════════════════╝
-//
-// COPY THIS AFTER PART 3
-//
-// ═════════════════════════════════════════════════════════════════════════════
-
-// ═════════════════════════════════════════════════════════════════════════════
-// ORDER MANAGEMENT (ADMIN)
-// ═════════════════════════════════════════════════════════════════════════════
-
-// Get All Orders (Admin)
+// ========== ORDER MANAGEMENT ==========
 app.get('/api/admin/orders', authenticateAdmin, async (req, res) => {
   try {
     const { page = 1, limit = 20, status = 'all', search = '' } = req.query;
@@ -2626,11 +2467,9 @@ app.get('/api/admin/orders', authenticateAdmin, async (req, res) => {
   }
 });
 
-// Get Single Order (Admin)
 app.get('/api/admin/orders/:orderId', authenticateAdmin, async (req, res) => {
   try {
-    const order = await Order.findById(req.params.orderId)
-      .populate('userId', 'fullName email phone country');
+    const order = await Order.findById(req.params.orderId).populate('userId', 'fullName email phone');
     
     if (!order) {
       return res.status(404).json({ success: false, message: 'Order not found' });
@@ -2646,7 +2485,6 @@ app.get('/api/admin/orders/:orderId', authenticateAdmin, async (req, res) => {
   }
 });
 
-// Update Order Status (Admin)
 app.put('/api/admin/orders/:orderId/status', authenticateAdmin, async (req, res) => {
   try {
     const { status } = req.body;
@@ -2663,11 +2501,9 @@ app.put('/api/admin/orders/:orderId/status', authenticateAdmin, async (req, res)
     order.status = status;
     await order.save();
 
-    console.log(`📦 Order status updated: ${order.orderReference} -> ${status}`);
-
     res.json({
       success: true,
-      message: 'Order status updated successfully',
+      message: 'Order status updated',
       order: order
     });
   } catch (error) {
@@ -2676,7 +2512,6 @@ app.put('/api/admin/orders/:orderId/status', authenticateAdmin, async (req, res)
   }
 });
 
-// Delete Order (Admin)
 app.delete('/api/admin/orders/:orderId', authenticateAdmin, async (req, res) => {
   try {
     const order = await Order.findByIdAndDelete(req.params.orderId);
@@ -2685,8 +2520,6 @@ app.delete('/api/admin/orders/:orderId', authenticateAdmin, async (req, res) => 
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
-    console.log(`🗑️  Order deleted: ${order.orderReference}`);
-
     res.json({ success: true, message: 'Order deleted successfully' });
   } catch (error) {
     console.error('❌ Delete order error:', error);
@@ -2694,15 +2527,10 @@ app.delete('/api/admin/orders/:orderId', authenticateAdmin, async (req, res) => 
   }
 });
 
-// ═════════════════════════════════════════════════════════════════════════════
-// USER ORDERS
-// ═════════════════════════════════════════════════════════════════════════════
-
-// Get User's Orders
+// ========== USER ORDERS ==========
 app.get('/api/orders', authenticateToken, async (req, res) => {
   try {
-    const orders = await Order.find({ userId: req.user.userId })
-      .sort({ createdAt: -1 });
+    const orders = await Order.find({ userId: req.user.userId }).sort({ createdAt: -1 });
 
     res.json({
       success: true,
@@ -2715,108 +2543,30 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
   }
 });
 
-// Get Orders with Download Links
-app.get('/api/orders/detailed', authenticateToken, async (req, res) => {
-  try {
-    const orders = await Order.find({ userId: req.user.userId })
-      .sort({ createdAt: -1 });
-
-    // Enhance orders with full product details including download links
-    const enhancedOrders = await Promise.all(
-      orders.map(async (order) => {
-        const enhancedItems = await Promise.all(
-          order.items.map(async (item) => {
-            // Try to find product by MongoDB ID first, then by title
-            let product = null;
-            if (mongoose.Types.ObjectId.isValid(item.id)) {
-              product = await Product.findById(item.id);
-            }
-            if (!product) {
-              product = await Product.findOne({ title: item.title });
-            }
-            
-            return {
-              ...item.toObject(),
-              downloadLink: product?.downloadLink || '',
-              image: product?.image || item.icon || '',
-              description: product?.description || '',
-              fileSize: product?.fileSize || '',
-              version: product?.version || '',
-              productId: product?._id || null
-            };
-          })
-        );
-
-        return {
-          ...order.toObject(),
-          items: enhancedItems,
-          canDownload: order.status === 'completed'
-        };
-      })
-    );
-
-    res.json({
-      success: true,
-      orders: enhancedOrders,
-      count: enhancedOrders.length
-    });
-  } catch (error) {
-    console.error('❌ Get detailed orders error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to fetch orders' 
-    });
-  }
-});
-
-// Create Order with Coupon
+// ========== CREATE ORDER WITH COUPON ==========
 app.post('/api/orders/create-with-coupon', authenticateToken, async (req, res) => {
   try {
     const { items, subtotal, couponCode, customerInfo, orderReference } = req.body;
 
     if (!items || items.length === 0) {
-      return res.status(400).json({ success: false, message: 'Order must contain at least one item' });
+      return res.status(400).json({ success: false, message: 'Order must have items' });
     }
 
     if (!subtotal || !customerInfo) {
-      return res.status(400).json({ success: false, message: 'Missing required order information' });
+      return res.status(400).json({ success: false, message: 'Missing order data' });
     }
 
     let discount = 0;
     let finalTotal = subtotal;
     let isFree = false;
-    let appliedCoupon = null;
 
-    // Apply coupon if provided
     if (couponCode) {
       const cleanCode = couponCode.trim().toUpperCase();
       const coupon = await Coupon.findOne({ code: cleanCode, isActive: true });
 
       if (coupon) {
-        // Check if coupon is expired
-        if (coupon.expiresAt && new Date() > coupon.expiresAt) {
-          return res.status(400).json({ success: false, message: 'Coupon has expired' });
-        }
-
-        // Check usage limit
-        if (coupon.usageLimit && coupon.usageCount >= coupon.usageLimit) {
-          return res.status(400).json({ success: false, message: 'Coupon usage limit reached' });
-        }
-
-        // Check minimum purchase amount
-        if (coupon.minPurchaseAmount && subtotal < coupon.minPurchaseAmount) {
-          return res.status(400).json({ 
-            success: false, 
-            message: `Minimum purchase of $${coupon.minPurchaseAmount} required for this coupon` 
-          });
-        }
-
-        // Calculate discount
         if (coupon.type === 'percentage') {
           discount = (subtotal * coupon.discount) / 100;
-          if (coupon.maxDiscountAmount) {
-            discount = Math.min(discount, coupon.maxDiscountAmount);
-          }
         } else {
           discount = coupon.discount;
         }
@@ -2827,18 +2577,9 @@ app.post('/api/orders/create-with-coupon', authenticateToken, async (req, res) =
 
         coupon.usageCount += 1;
         await coupon.save();
-
-        appliedCoupon = {
-          code: coupon.code,
-          discount: discount,
-          type: coupon.type
-        };
-      } else {
-        return res.status(400).json({ success: false, message: 'Invalid coupon code' });
       }
     }
 
-    // Create order
     const order = new Order({
       userId: req.user.userId,
       orderReference: orderReference || 'UYEH-' + Date.now(),
@@ -2858,16 +2599,13 @@ app.post('/api/orders/create-with-coupon', authenticateToken, async (req, res) =
 
     await order.save();
 
-    // Send confirmation email if order is free
     if (isFree) {
       await sendOrderConfirmationEmail(customerInfo.email, order);
     }
 
-    console.log(`📦 Order created: ${order.orderReference} (${isFree ? 'FREE' : '$' + finalTotal})`);
-
     res.status(201).json({
       success: true,
-      message: isFree ? '🎉 Order completed! Download links sent to your email.' : 'Order created successfully',
+      message: isFree ? '🎉 Order completed!' : 'Order created',
       order: {
         _id: order._id,
         orderReference: order.orderReference,
@@ -2876,8 +2614,7 @@ app.post('/api/orders/create-with-coupon', authenticateToken, async (req, res) =
         status: order.status,
         items: order.items,
         isFree: isFree,
-        paymentRequired: !isFree,
-        appliedCoupon: appliedCoupon
+        paymentRequired: !isFree
       }
     });
 
@@ -2887,33 +2624,16 @@ app.post('/api/orders/create-with-coupon', authenticateToken, async (req, res) =
   }
 });
 
-// Verify Payment
+// ========== VERIFY PAYMENT ==========
 app.post('/api/orders/verify-payment', authenticateToken, async (req, res) => {
   try {
     const { transactionId, orderId } = req.body;
-
-    if (!transactionId || !orderId) {
-      return res.status(400).json({ success: false, message: 'Transaction ID and Order ID required' });
-    }
 
     const order = await Order.findById(orderId);
     if (!order) {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
-    // Verify order belongs to user
-    if (order.userId.toString() !== req.user.userId) {
-      return res.status(403).json({ success: false, message: 'Unauthorized' });
-    }
-
-    if (!FLUTTERWAVE_SECRET_KEY) {
-      return res.status(500).json({ 
-        success: false, 
-        message: 'Payment gateway not configured' 
-      });
-    }
-
-    // Verify payment with Flutterwave
     const response = await axios.get(
       `https://api.flutterwave.com/v3/transactions/${transactionId}/verify`,
       { headers: { 'Authorization': `Bearer ${FLUTTERWAVE_SECRET_KEY}` } }
@@ -2931,11 +2651,9 @@ app.post('/api/orders/verify-payment', authenticateToken, async (req, res) => {
 
       await sendOrderConfirmationEmail(order.customerInfo.email, order);
 
-      console.log(`✅ Payment verified: ${order.orderReference}`);
-
       res.json({
         success: true,
-        message: 'Payment verified successfully! Download links sent to your email.',
+        message: 'Payment verified',
         order: order
       });
     } else {
@@ -2943,17 +2661,17 @@ app.post('/api/orders/verify-payment', authenticateToken, async (req, res) => {
       order.paymentInfo.status = 'failed';
       await order.save();
 
-      console.log(`❌ Payment failed: ${order.orderReference}`);
-
       res.status(400).json({ success: false, message: 'Payment verification failed' });
     }
   } catch (error) {
     console.error('❌ Verify payment error:', error);
-    res.status(500).json({ success: false, message: 'Payment verification failed' });
+    res.status(500).json({ success: false, message: 'Verification failed' });
   }
 });
 
-// ═════════════════════════════════════════════════════════════════════════════
+console.log('✅ Part 3 loaded: Dashboard, Analytics, Users & Orders configured');
+
+// =====// ═════════════════════════════════════════════════════════════════════════════
 // DOWNLOAD TRACKING
 // ═════════════════════════════════════════════════════════════════════════════
 
@@ -3075,6 +2793,7 @@ app.get('/api/admin/downloads/stats', authenticateAdmin, async (req, res) => {
     });
   }
 });
+
 
 // ═════════════════════════════════════════════════════════════════════════════
 // PRODUCT MANAGEMENT
@@ -3392,11 +3111,7 @@ app.post('/api/admin/products/seed-with-downloads', authenticateAdmin, async (re
   }
 });
 
-// ═════════════════════════════════════════════════════════════════════════════
-// COUPON MANAGEMENT
-// ═════════════════════════════════════════════════════════════════════════════
-
-// Get All Coupons (Admin)
+// ========== COUPON MANAGEMENT ==========
 app.get('/api/admin/coupons', authenticateAdmin, async (req, res) => {
   try {
     const { status = 'all' } = req.query;
@@ -3408,9 +3123,7 @@ app.get('/api/admin/coupons', authenticateAdmin, async (req, res) => {
       query.isActive = false;
     }
 
-    const coupons = await Coupon.find(query)
-      .populate('createdBy', 'fullName email')
-      .sort({ createdAt: -1 });
+    const coupons = await Coupon.find(query).sort({ createdAt: -1 });
     
     res.json({
       success: true,
@@ -3423,27 +3136,12 @@ app.get('/api/admin/coupons', authenticateAdmin, async (req, res) => {
   }
 });
 
-// Create Coupon (Admin)
 app.post('/api/admin/coupons', authenticateAdmin, async (req, res) => {
   try {
-    const { 
-      code, 
-      discount, 
-      type, 
-      usageLimit, 
-      expiresAt, 
-      minPurchaseAmount, 
-      maxDiscountAmount,
-      applicableCategories,
-      description 
-    } = req.body;
+    const { code, discount, type, usageLimit, expiresAt, minPurchaseAmount, description } = req.body;
 
     if (!code || discount === undefined || !type) {
-      return res.status(400).json({ success: false, message: 'Code, discount, and type are required' });
-    }
-
-    if (!['percentage', 'fixed'].includes(type)) {
-      return res.status(400).json({ success: false, message: 'Type must be "percentage" or "fixed"' });
+      return res.status(400).json({ success: false, message: 'Missing required fields' });
     }
 
     const existing = await Coupon.findOne({ code: code.toUpperCase() });
@@ -3458,15 +3156,10 @@ app.post('/api/admin/coupons', authenticateAdmin, async (req, res) => {
       usageLimit: usageLimit || null,
       expiresAt: expiresAt || null,
       minPurchaseAmount: minPurchaseAmount || 0,
-      maxDiscountAmount: maxDiscountAmount || null,
-      applicableCategories: applicableCategories || [],
-      description: description || '',
-      createdBy: req.adminUser._id
+      description: description || ''
     });
 
     await coupon.save();
-
-    console.log(`🎫 Coupon created: ${coupon.code}`);
 
     res.status(201).json({
       success: true,
@@ -3475,24 +3168,13 @@ app.post('/api/admin/coupons', authenticateAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Create coupon error:', error);
-    res.status(500).json({ success: false, message: 'Coupon creation failed' });
+    res.status(500).json({ success: false, message: 'Creation failed' });
   }
 });
 
-// Update Coupon (Admin)
 app.put('/api/admin/coupons/:code', authenticateAdmin, async (req, res) => {
   try {
-    const { 
-      discount, 
-      type, 
-      usageLimit, 
-      expiresAt, 
-      minPurchaseAmount, 
-      maxDiscountAmount,
-      applicableCategories,
-      description, 
-      isActive 
-    } = req.body;
+    const { discount, type, usageLimit, expiresAt, minPurchaseAmount, description, isActive } = req.body;
 
     const coupon = await Coupon.findOne({ code: req.params.code.toUpperCase() });
     if (!coupon) {
@@ -3504,14 +3186,10 @@ app.put('/api/admin/coupons/:code', authenticateAdmin, async (req, res) => {
     if (usageLimit !== undefined) coupon.usageLimit = usageLimit;
     if (expiresAt !== undefined) coupon.expiresAt = expiresAt;
     if (minPurchaseAmount !== undefined) coupon.minPurchaseAmount = minPurchaseAmount;
-    if (maxDiscountAmount !== undefined) coupon.maxDiscountAmount = maxDiscountAmount;
-    if (applicableCategories !== undefined) coupon.applicableCategories = applicableCategories;
     if (description !== undefined) coupon.description = description;
     if (isActive !== undefined) coupon.isActive = isActive;
 
     await coupon.save();
-
-    console.log(`✅ Coupon updated: ${coupon.code}`);
 
     res.json({
       success: true,
@@ -3520,11 +3198,10 @@ app.put('/api/admin/coupons/:code', authenticateAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Update coupon error:', error);
-    res.status(500).json({ success: false, message: 'Coupon update failed' });
+    res.status(500).json({ success: false, message: 'Update failed' });
   }
 });
 
-// Delete Coupon (Admin)
 app.delete('/api/admin/coupons/:code', authenticateAdmin, async (req, res) => {
   try {
     const coupon = await Coupon.findOneAndDelete({ code: req.params.code.toUpperCase() });
@@ -3533,20 +3210,16 @@ app.delete('/api/admin/coupons/:code', authenticateAdmin, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Coupon not found' });
     }
 
-    console.log(`🗑️  Coupon deleted: ${coupon.code}`);
-
     res.json({ success: true, message: 'Coupon deleted successfully' });
   } catch (error) {
     console.error('❌ Delete coupon error:', error);
-    res.status(500).json({ success: false, message: 'Coupon deletion failed' });
+    res.status(500).json({ success: false, message: 'Delete failed' });
   }
 });
 
-// Validate Coupon (User)
 app.post('/api/coupons/validate', authenticateToken, async (req, res) => {
   try {
     const { code, orderTotal } = req.body;
-    
     if (!code) {
       return res.status(400).json({ success: false, message: 'Coupon code required' });
     }
@@ -3555,152 +3228,87 @@ app.post('/api/coupons/validate', authenticateToken, async (req, res) => {
     const coupon = await Coupon.findOne({ code: cleanCode });
 
     if (!coupon) {
-      return res.status(404).json({ success: false, message: 'Invalid coupon code' });
+      return res.status(404).json({ success: false, message: `Invalid coupon "${cleanCode}"` });
     }
 
     if (!coupon.isActive) {
-      return res.status(400).json({ success: false, message: 'Coupon is not active' });
+      return res.status(400).json({ success: false, message: 'Coupon inactive' });
     }
 
     if (coupon.expiresAt && new Date() > coupon.expiresAt) {
-      return res.status(400).json({ success: false, message: 'Coupon has expired' });
+      return res.status(400).json({ success: false, message: 'Coupon expired' });
     }
 
     if (coupon.usageLimit && coupon.usageCount >= coupon.usageLimit) {
-      return res.status(400).json({ success: false, message: 'Coupon usage limit reached' });
+      return res.status(400).json({ success: false, message: 'Usage limit reached' });
     }
 
-    if (orderTotal && coupon.minPurchaseAmount && orderTotal < coupon.minPurchaseAmount) {
-      return res.status(400).json({ 
-        success: false, 
-        message: `Minimum purchase of $${coupon.minPurchaseAmount} required` 
-      });
+    if (orderTotal < coupon.minPurchaseAmount) {
+      return res.status(400).json({ success: false, message: `Minimum purchase of $${coupon.minPurchaseAmount} required` });
     }
 
-    // Calculate discount
-    let discount = 0;
+    let discountAmount = 0;
     if (coupon.type === 'percentage') {
-      discount = (orderTotal * coupon.discount) / 100;
-      if (coupon.maxDiscountAmount) {
-        discount = Math.min(discount, coupon.maxDiscountAmount);
-      }
+      discountAmount = (orderTotal * coupon.discount) / 100;
     } else {
-      discount = coupon.discount;
+      discountAmount = coupon.discount;
     }
 
-    discount = Math.min(discount, orderTotal);
+    discountAmount = Math.min(discountAmount, orderTotal);
+    const finalAmount = Math.max(0, orderTotal - discountAmount);
+    const isFree = finalAmount === 0;
 
     res.json({
       success: true,
-      message: 'Coupon is valid',
       coupon: {
         code: coupon.code,
-        discount: discount,
+        discount: coupon.discount,
         type: coupon.type,
-        description: coupon.description
-      }
+        discountAmount: discountAmount,
+        finalAmount: finalAmount,
+        isFree: isFree
+      },
+      message: isFree ? '🎉 Order is FREE!' : `✅ Saved $${discountAmount.toFixed(2)}`
     });
+
   } catch (error) {
     console.error('❌ Validate coupon error:', error);
     res.status(500).json({ success: false, message: 'Validation failed' });
   }
 });
 
-// Seed Default Coupons
 app.post('/api/coupons/seed', async (req, res) => {
   try {
     const defaultCoupons = [
-      {
-        code: 'WELCOME10',
-        discount: 10,
-        type: 'percentage',
-        description: 'Welcome discount - 10% off',
-        minPurchaseAmount: 0,
-        isActive: true
-      },
-      {
-        code: 'SAVE20',
-        discount: 20,
-        type: 'percentage',
-        description: 'Save 20% on your purchase',
-        minPurchaseAmount: 50,
-        isActive: true
-      },
-      {
-        code: 'FREESHIP',
-        discount: 5,
-        type: 'fixed',
-        description: 'Free shipping - $5 off',
-        minPurchaseAmount: 25,
-        isActive: true
-      },
-      {
-        code: 'FLASHSALE',
-        discount: 30,
-        type: 'percentage',
-        description: 'Flash sale - 30% off',
-        minPurchaseAmount: 100,
-        maxDiscountAmount: 50,
-        usageLimit: 100,
-        isActive: true
-      },
-      {
-        code: 'NEWUSER',
-        discount: 15,
-        type: 'percentage',
-        description: 'New user discount - 15% off',
-        minPurchaseAmount: 30,
-        usageLimit: 1000,
-        isActive: true
-      }
+      { code: 'WELCOME10', discount: 10, type: 'percentage', isActive: true, description: 'Welcome bonus - 10% off' },
+      { code: 'SAVE20', discount: 20, type: 'percentage', isActive: true, description: 'Save 20% on your order' },
+      { code: 'FLAT50', discount: 50, type: 'fixed', isActive: true, description: '$50 off your purchase' },
+      { code: 'NEWUSER', discount: 15, type: 'percentage', isActive: true, description: 'New user discount' },
+      { code: 'FREE100', discount: 100, type: 'percentage', isActive: true, usageLimit: 50, description: 'Free order - Limited to 50 uses' }
     ];
 
     let created = 0;
-    let skipped = 0;
-
     for (const couponData of defaultCoupons) {
       const existing = await Coupon.findOne({ code: couponData.code });
       if (!existing) {
         await Coupon.create(couponData);
         created++;
-      } else {
-        skipped++;
       }
     }
 
-    console.log(`🎫 Seeded ${created} coupons (${skipped} already existed)`);
-
     res.json({
       success: true,
-      message: `Successfully seeded ${created} coupons`,
-      created: created,
-      skipped: skipped
+      message: `Seeded ${created} coupons`,
+      coupons: defaultCoupons.map(c => c.code)
     });
   } catch (error) {
     console.error('❌ Seed coupons error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to seed coupons' 
-    });
+    res.status(500).json({ success: false, message: 'Seed failed' });
   }
 });
-
 console.log('\n✅ Part 4 Loaded: Orders, Products, Downloads & Coupons Ready');
 console.log('📦 Endpoints: Order Management, Product CRUD, Download Tracking, Coupon System\n');
-
-// ═════════════════════════════════════════════════════════════════════════════
-// END OF PART 4 - Continue to Part 5 for Blog & System Settings
-// ═════════════════════════════════════════════════════════════════════════════
-// ╔═══════════════════════════════════════════════════════════════════════════╗
-// ║                    UYEH TECH BACKEND SERVER v7.0                         ║
-// ║                          PART 6 OF 7                                      ║
-// ║            Chat System & Support Tickets (NEW v7.0)                       ║
-// ╚═══════════════════════════════════════════════════════════════════════════╝
-//
-// COPY THIS AFTER PART 5
-// THIS IS COMPLETELY NEW CODE FOR v7.0
-//
-// ═════════════════════════════════════════════════════════════════════════════
+console.log('✅ Part 4 loaded: Download Links, Products & Coupons configured');
 
 // ═════════════════════════════════════════════════════════════════════════════
 // CUSTOMER CHAT ENDPOINTS
@@ -4437,28 +4045,552 @@ app.put('/api/admin/agents/:agentId', authenticateAdmin, async (req, res) => {
   }
 });
 
-console.log('\n✅ Part 6 Loaded: Chat System & Support Tickets Ready');
+console.log('\n Loaded: Chat System & Support Tickets Ready');
 console.log('💬 Endpoints: Customer Chat, Agent Dashboard, File Upload, Real-time Updates\n');
 
-// ═════════════════════════════════════════════════════════════════════════════
-// END OF PART 6 - Continue to Part 7 for Server Startup & Documentation
-// ═════════════════════════════════════════════════════════════════════════════
-// ╔═══════════════════════════════════════════════════════════════════════════╗
-// ║                    UYEH TECH BACKEND SERVER v7.0                         ║
-// ║                          PART 7 OF 7 (FINAL)                              ║
-// ║         Server Startup, Error Handling & Documentation                    ║
-// ╚═══════════════════════════════════════════════════════════════════════════╝
-//
-// COPY THIS AFTER PART 6 - THIS IS THE FINAL PART!
-//
-// ═════════════════════════════════════════════════════════════════════════════
 
-// ═════════════════════════════════════════════════════════════════════════════
-// SERVER STARTUP
-// ═════════════════════════════════════════════════════════════════════════════
+// ========== BLOG MANAGEMENT ==========
+app.get('/api/admin/blog/posts', authenticateAdmin, async (req, res) => {
+  try {
+    const { status = 'all', category = 'all' } = req.query;
+    
+    let query = {};
+    
+    if (status && status !== 'all') {
+      query.status = status;
+    }
+    
+    if (category && category !== 'all') {
+      query.category = category;
+    }
 
-// NOTE: Replace app.listen() with server.listen()
-// This enables both HTTP and WebSocket on the same port
+    const posts = await BlogPost.find(query)
+      .populate('author', 'fullName email')
+      .sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      posts: posts,
+      count: posts.length
+    });
+  } catch (error) {
+    console.error('❌ Get posts error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch posts' });
+  }
+});
+
+app.post('/api/admin/blog/posts', authenticateAdmin, async (req, res) => {
+  try {
+    const { title, excerpt, content, featuredImage, category, tags, status, metaTitle, metaDescription, metaKeywords } = req.body;
+
+    if (!title || !excerpt || !content || !category) {
+      return res.status(400).json({ success: false, message: 'Missing required fields' });
+    }
+
+    const slug = generateSlug(title);
+    const existing = await BlogPost.findOne({ slug });
+    
+    if (existing) {
+      return res.status(400).json({ success: false, message: 'Post with this title exists' });
+    }
+
+    const blogPost = new BlogPost({
+      title,
+      slug,
+      excerpt,
+      content,
+      featuredImage: featuredImage || '',
+      author: req.user.userId,
+      category,
+      tags: tags || [],
+      status: status || 'draft',
+      metaTitle: metaTitle || title,
+      metaDescription: metaDescription || excerpt,
+      metaKeywords: metaKeywords || []
+    });
+
+    await blogPost.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Blog post created',
+      post: blogPost
+    });
+  } catch (error) {
+    console.error('❌ Create post error:', error);
+    res.status(500).json({ success: false, message: 'Creation failed' });
+  }
+});
+
+app.put('/api/admin/blog/posts/:id', authenticateAdmin, async (req, res) => {
+  try {
+    const post = await BlogPost.findById(req.params.id);
+    if (!post) {
+      return res.status(404).json({ success: false, message: 'Post not found' });
+    }
+
+    const allowedUpdates = ['title', 'excerpt', 'content', 'featuredImage', 'category', 'tags', 'status', 'metaTitle', 'metaDescription', 'metaKeywords'];
+    
+    allowedUpdates.forEach(field => {
+      if (req.body[field] !== undefined) {
+        post[field] = req.body[field];
+      }
+    });
+
+    if (req.body.title && req.body.title !== post.title) {
+      post.slug = generateSlug(req.body.title);
+    }
+
+    await post.save();
+
+    res.json({
+      success: true,
+      message: 'Post updated',
+      post: post
+    });
+  } catch (error) {
+    console.error('❌ Update post error:', error);
+    res.status(500).json({ success: false, message: 'Update failed' });
+  }
+});
+
+app.delete('/api/admin/blog/posts/:id', authenticateAdmin, async (req, res) => {
+  try {
+    const post = await BlogPost.findByIdAndDelete(req.params.id);
+    if (!post) {
+      return res.status(404).json({ success: false, message: 'Post not found' });
+    }
+
+    res.json({ success: true, message: 'Post deleted' });
+  } catch (error) {
+    console.error('❌ Delete post error:', error);
+    res.status(500).json({ success: false, message: 'Delete failed' });
+  }
+});
+
+app.get('/api/blog/posts', async (req, res) => {
+  try {
+    const { limit = 10, skip = 0, category = 'all' } = req.query;
+
+    let query = { status: 'published' };
+    if (category && category !== 'all') {
+      query.category = category;
+    }
+
+    const posts = await BlogPost.find(query)
+      .populate('author', 'fullName profileImage')
+      .sort({ publishedAt: -1 })
+      .limit(parseInt(limit))
+      .skip(parseInt(skip))
+      .select('-content');
+
+    const total = await BlogPost.countDocuments(query);
+
+    res.json({
+      success: true,
+      posts: posts,
+      count: posts.length,
+      total: total
+    });
+  } catch (error) {
+    console.error('❌ Get published posts error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch posts' });
+  }
+});
+
+app.get('/api/blog/posts/:slug', async (req, res) => {
+  try {
+    const post = await BlogPost.findOne({ slug: req.params.slug })
+      .populate('author', 'fullName profileImage bio');
+
+    if (!post || post.status !== 'published') {
+      return res.status(404).json({ success: false, message: 'Post not found' });
+    }
+
+    post.views += 1;
+    await post.save();
+
+    res.json({
+      success: true,
+      post: post
+    });
+  } catch (error) {
+    console.error('❌ Get post error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch post' });
+  }
+});
+
+app.post('/api/blog/posts/:id/like', authenticateToken, async (req, res) => {
+  try {
+    const post = await BlogPost.findById(req.params.id);
+    if (!post) {
+      return res.status(404).json({ success: false, message: 'Post not found' });
+    }
+
+    post.likes += 1;
+    await post.save();
+
+    res.json({
+      success: true,
+      likes: post.likes
+    });
+  } catch (error) {
+    console.error('❌ Like post error:', error);
+    res.status(500).json({ success: false, message: 'Like failed' });
+  }
+});
+
+app.post('/api/blog/posts/:id/comments', authenticateToken, async (req, res) => {
+  try {
+    const { comment } = req.body;
+    
+    const post = await BlogPost.findById(req.params.id);
+    if (!post) {
+      return res.status(404).json({ success: false, message: 'Post not found' });
+    }
+
+    const user = await User.findById(req.user.userId);
+    
+    post.comments.push({
+      user: user._id,
+      userName: user.fullName,
+      userEmail: user.email,
+      comment: comment,
+      approved: false
+    });
+
+    await post.save();
+
+    res.json({
+      success: true,
+      message: 'Comment added (pending approval)',
+      comments: post.comments
+    });
+  } catch (error) {
+    console.error('❌ Add comment error:', error);
+    res.status(500).json({ success: false, message: 'Comment failed' });
+  }
+});
+
+app.put('/api/admin/blog/posts/:postId/comments/:commentId/approve', authenticateAdmin, async (req, res) => {
+  try {
+    const post = await BlogPost.findById(req.params.postId);
+    if (!post) {
+      return res.status(404).json({ success: false, message: 'Post not found' });
+    }
+
+    const comment = post.comments.id(req.params.commentId);
+    if (!comment) {
+      return res.status(404).json({ success: false, message: 'Comment not found' });
+    }
+
+    comment.approved = true;
+    await post.save();
+
+    res.json({
+      success: true,
+      message: 'Comment approved'
+    });
+  } catch (error) {
+    console.error('❌ Approve comment error:', error);
+    res.status(500).json({ success: false, message: 'Approval failed' });
+  }
+});
+
+app.get('/api/blog/categories', async (req, res) => {
+  try {
+    const categories = await BlogPost.aggregate([
+      { $match: { status: 'published' } },
+      { $group: { _id: '$category', count: { $sum: 1 } } },
+      { $sort: { count: -1 } }
+    ]);
+
+    res.json({
+      success: true,
+      categories: categories.map(c => ({
+        name: c._id,
+        count: c.count
+      }))
+    });
+  } catch (error) {
+    console.error('❌ Get categories error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch categories' });
+  }
+});
+
+app.get('/api/blog/search', async (req, res) => {
+  try {
+    const query = req.query.q;
+    if (!query) {
+      return res.status(400).json({ success: false, message: 'Search query required' });
+    }
+
+    const posts = await BlogPost.find({
+      status: 'published',
+      $or: [
+        { title: { $regex: query, $options: 'i' } },
+        { excerpt: { $regex: query, $options: 'i' } },
+        { content: { $regex: query, $options: 'i' } },
+        { tags: { $regex: query, $options: 'i' } }
+      ]
+    })
+    .populate('author', 'fullName')
+    .sort({ publishedAt: -1 })
+    .limit(20)
+    .select('-content');
+
+    res.json({
+      success: true,
+      posts: posts,
+      count: posts.length
+    });
+  } catch (error) {
+    console.error('❌ Search posts error:', error);
+    res.status(500).json({ success: false, message: 'Search failed' });
+  }
+});
+
+app.get('/api/blog/featured', async (req, res) => {
+  try {
+    const posts = await BlogPost.find({ status: 'published' })
+      .populate('author', 'fullName profileImage')
+      .sort({ views: -1, likes: -1 })
+      .limit(5)
+      .select('-content');
+
+    res.json({
+      success: true,
+      posts: posts
+    });
+  } catch (error) {
+    console.error('❌ Get featured posts error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch featured posts' });
+  }
+});
+
+// ========== SYSTEM SETTINGS ==========
+app.get('/api/admin/settings', authenticateAdmin, async (req, res) => {
+  try {
+    let settings = await SystemSettings.findOne();
+    
+    if (!settings) {
+      settings = new SystemSettings({
+        siteName: 'UYEH TECH',
+        contactEmail: 'contact@uyehtech.com',
+        supportEmail: 'support@uyehtech.com',
+        allowRegistration: true,
+        requireEmailVerification: true
+      });
+      await settings.save();
+    }
+
+    res.json({
+      success: true,
+      settings: settings
+    });
+  } catch (error) {
+    console.error('❌ Get settings error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch settings' });
+  }
+});
+
+app.put('/api/admin/settings', authenticateAdmin, async (req, res) => {
+  try {
+    let settings = await SystemSettings.findOne();
+    
+    if (!settings) {
+      settings = new SystemSettings();
+    }
+
+    Object.assign(settings, req.body);
+    settings.updatedAt = Date.now();
+    await settings.save();
+
+    res.json({
+      success: true,
+      message: 'Settings updated successfully',
+      settings: settings
+    });
+  } catch (error) {
+    console.error('❌ Update settings error:', error);
+    res.status(500).json({ success: false, message: 'Update failed' });
+  }
+});
+
+app.get('/api/settings/public', async (req, res) => {
+  try {
+    const settings = await SystemSettings.findOne();
+    
+    res.json({
+      success: true,
+      settings: {
+        siteName: settings?.siteName || 'UYEH TECH',
+        siteDescription: settings?.siteDescription || '',
+        contactEmail: settings?.contactEmail || '',
+        phone: settings?.phone || '',
+        socialMedia: settings?.socialMedia || {},
+        maintenanceMode: settings?.maintenanceMode || false,
+        maintenanceMessage: settings?.maintenanceMessage || '',
+        allowRegistration: settings?.allowRegistration || true
+      }
+    });
+  } catch (error) {
+    res.json({
+      success: true,
+      settings: {
+        siteName: 'UYEH TECH',
+        allowRegistration: true
+      }
+    });
+  }
+});
+
+// ========== NOTIFICATION PREFERENCES ==========
+app.get('/api/user/notifications', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId);
+    res.json({
+      success: true,
+      preferences: user.notificationPreferences || {
+        email: true,
+        orders: true,
+        marketing: false
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to fetch preferences' });
+  }
+});
+
+app.put('/api/user/notifications/update', authenticateToken, async (req, res) => {
+  try {
+    const { email, orders, marketing } = req.body;
+    const user = await User.findById(req.user.userId);
+
+    if (!user.notificationPreferences) {
+      user.notificationPreferences = { email: true, orders: true, marketing: false };
+    }
+
+    if (email !== undefined) user.notificationPreferences.email = email;
+    if (orders !== undefined) user.notificationPreferences.orders = orders;
+    if (marketing !== undefined) user.notificationPreferences.marketing = marketing;
+
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Preferences updated',
+      preferences: user.notificationPreferences
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Update failed' });
+  }
+});
+
+// ========== PAYMENT METHODS ==========
+app.get('/api/user/payment-methods', authenticateToken, async (req, res) => {
+  try {
+    const methods = await PaymentMethod.find({ userId: req.user.userId }).sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      methods: methods
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to fetch methods' });
+  }
+});
+
+app.post('/api/user/payment-methods/add', authenticateToken, async (req, res) => {
+  try {
+    const { type, lastFour, expiry, cardholderName, isDefault } = req.body;
+
+    if (isDefault) {
+      await PaymentMethod.updateMany({ userId: req.user.userId }, { $set: { isDefault: false } });
+    }
+
+    const paymentMethod = new PaymentMethod({
+      userId: req.user.userId,
+      type,
+      lastFour,
+      expiry,
+      cardholderName,
+      isDefault: isDefault || false
+    });
+
+    await paymentMethod.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Payment method added',
+      method: paymentMethod
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to add method' });
+  }
+});
+
+// ========== CHANGE PASSWORD ==========
+app.post('/api/auth/change-password', authenticateToken, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    const user = await User.findById(req.user.userId);
+    const isPasswordValid = await bcrypt.compare(currentPassword, user.password);
+    
+    if (!isPasswordValid) {
+      return res.status(401).json({ success: false, message: 'Current password incorrect' });
+    }
+
+    user.password = await bcrypt.hash(newPassword, 10);
+    await user.save();
+
+    res.json({ success: true, message: 'Password changed' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to change password' });
+  }
+});
+
+// ========== TOGGLE 2FA ==========
+app.post('/api/auth/toggle-2fa', authenticateToken, async (req, res) => {
+  try {
+    const { enabled } = req.body;
+    const user = await User.findById(req.user.userId);
+
+    user.twoFactorEnabled = !!enabled;
+    if (enabled && !user.twoFactorSecret) {
+      user.twoFactorSecret = generateToken();
+    }
+
+    await user.save();
+
+    res.json({
+      success: true,
+      message: enabled ? '2FA enabled' : '2FA disabled',
+      user: {
+        id: user._id,
+        twoFactorEnabled: user.twoFactorEnabled
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to toggle 2FA' });
+  }
+});
+
+// ========== DELETE ACCOUNT ==========
+app.delete('/api/auth/delete-account', authenticateToken, async (req, res) => {
+  try {
+    await Order.deleteMany({ userId: req.user.userId });
+    await PaymentMethod.deleteMany({ userId: req.user.userId });
+    await Download.deleteMany({ userId: req.user.userId });
+    await User.findByIdAndDelete(req.user.userId);
+
+    res.json({ success: true, message: 'Account deleted' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Delete failed' });
+  }
+});
+
 
 server.listen(PORT, () => {
   console.log('\n╔═══════════════════════════════════════════════════════════════════════════╗');
@@ -4816,7 +4948,7 @@ console.log('🎉 ALL 7 PARTS LOADED SUCCESSFULLY! UYEH TECH SERVER v7.0 READY!\
 ║  ✅ Download Tracking System                                                 ║
 ║  ✅ Coupon & Discount System                                                 ║
 ║  ✅ Blog Management Platform                                                 ║
-║  ✅ Real-time Chat System (NEW!)                                             ║
+║  ✅ Real-time Chat System (NEW!)                                             ║d
 ║  ✅ Agent Dashboard & Management (NEW!)                                      ║
 ║  ✅ File Upload Support (NEW!)                                               ║
 ║  ✅ WebSocket Real-time Updates (NEW!)                                       ║
