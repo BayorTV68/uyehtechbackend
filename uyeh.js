@@ -172,25 +172,95 @@ function sendToCustomer(customerId, message) {
 }
 
 // Handle WebSocket messages
+// ═════════════════════════════════════════════════════════════════════════════
+// ENHANCED WEBSOCKET MESSAGE HANDLER - FIXED VERSION
+// This replaces lines 175-192 in uyeh.js
+// ═════════════════════════════════════════════════════════════════════════════
+
 function handleWebSocketMessage(ws, data) {
-  switch (data.type) {
-    case 'ping':
-      ws.send(JSON.stringify({ type: 'pong', timestamp: new Date().toISOString() }));
-      break;
-    case 'typing':
-      if (ws.chatId) {
-        broadcastToChat(ws.chatId, {
-          type: 'typing',
-          userId: data.userId || ws.customerId || ws.agentId,
-          isTyping: data.isTyping
-        }, ws);
-      }
-      break;
-    default:
-      console.log(`⚠️ Unhandled message type: ${data.type}`);
+  try {
+    switch (data.type) {
+      case 'ping':
+        // Respond to heartbeat ping
+        ws.send(JSON.stringify({ 
+          type: 'pong', 
+          timestamp: new Date().toISOString() 
+        }));
+        break;
+        
+      case 'typing':
+        // Broadcast typing indicator to other participants in the chat
+        if (ws.chatId) {
+          broadcastToChat(ws.chatId, {
+            type: 'typing',
+            chatId: ws.chatId,
+            userId: data.userId || ws.customerId || ws.agentId,
+            userName: data.userName,
+            isTyping: data.isTyping,
+            timestamp: new Date().toISOString()
+          }, ws); // Exclude sender from broadcast
+        }
+        break;
+        
+      case 'message_read':
+        // Handle message read receipts
+        if (ws.chatId && data.messageId) {
+          broadcastToChat(ws.chatId, {
+            type: 'message_read',
+            chatId: ws.chatId,
+            messageId: data.messageId,
+            readBy: data.userId || ws.agentId || ws.customerId,
+            timestamp: new Date().toISOString()
+          }, ws);
+        }
+        break;
+        
+      case 'agent_status_change':
+        // Broadcast agent status changes to all connected agents
+        if (ws.agentId && data.status) {
+          // Notify all agents about status change
+          agentConnections.forEach((agentWs, id) => {
+            if (agentWs !== ws && agentWs.readyState === WebSocket.OPEN) {
+              agentWs.send(JSON.stringify({
+                type: 'agent_status_updated',
+                agentId: ws.agentId,
+                status: data.status,
+                timestamp: new Date().toISOString()
+              }));
+            }
+          });
+        }
+        break;
+        
+      case 'request_chat_list':
+        // Agent requesting updated chat list
+        if (ws.agentId) {
+          ws.send(JSON.stringify({
+            type: 'chat_list_refresh',
+            timestamp: new Date().toISOString()
+          }));
+        }
+        break;
+        
+      default:
+        console.log(`⚠️ Unhandled WebSocket message type: ${data.type}`);
+        ws.send(JSON.stringify({
+          type: 'error',
+          message: `Unhandled message type: ${data.type}`,
+          timestamp: new Date().toISOString()
+        }));
+    }
+  } catch (error) {
+    console.error('❌ Error handling WebSocket message:', error);
+    ws.send(JSON.stringify({
+      type: 'error',
+      message: 'Internal server error processing message',
+      timestamp: new Date().toISOString()
+    }));
   }
 }
 
+console.log('✅ Enhanced WebSocket Message Handler Loaded');
 // ═════════════════════════════════════════════════════════════════════════════
 // MIDDLEWARE CONFIGURATION
 // ═════════════════════════════════════════════════════════════════════════════
@@ -4036,7 +4106,14 @@ app.get('/api/agent/chats', authenticateAgent, async (req, res) => {
 });
 
 // Assign Chat to Agent (Admin)
-app.post('/api/agent/chats/:chatId/assign', authenticateAdmin, async (req, res) => {
+// ═════════════════════════════════════════════════════════════════════════════
+// ENHANCED AGENT ASSIGNMENT ENDPOINT - FIXED VERSION
+// This enhances the /api/agent/chats/:chatId/assign endpoint in uyeh.js
+// Lines 4039-4100+
+// ═════════════════════════════════════════════════════════════════════════════
+
+// Assign Chat to Agent (Admin or Self-Assignment)
+app.post('/api/agent/chats/:chatId/assign', authenticateAgent, async (req, res) => {
   try {
     const { chatId } = req.params;
     const { agentId } = req.body;
@@ -4050,71 +4127,144 @@ app.post('/api/agent/chats/:chatId/assign', authenticateAdmin, async (req, res) 
       return res.status(404).json({ success: false, message: 'Chat session not found' });
     }
 
+    // Check if requester is admin or self-assigning
+    const isAdmin = req.agentUser.isAdmin;
+    const isSelfAssign = req.agentUser._id.toString() === agentId.toString();
+    
+    if (!isAdmin && !isSelfAssign) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Only admins can assign chats to other agents' 
+      });
+    }
+
     const agent = await User.findById(agentId);
     if (!agent || (!agent.isAgent && !agent.isAdmin)) {
       return res.status(400).json({ success: false, message: 'Invalid agent ID' });
     }
 
+    // Check if agent is available
+    if (agent.agentInfo?.status === 'offline') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Cannot assign chat to offline agent' 
+      });
+    }
+
     // Update previous agent stats if chat was already assigned
-    if (chat.assignedAgent) {
+    if (chat.assignedAgent && chat.assignedAgent.toString() !== agentId.toString()) {
       const previousAgent = await User.findById(chat.assignedAgent);
       if (previousAgent && previousAgent.agentInfo) {
         previousAgent.agentInfo.activeChats = Math.max(0, previousAgent.agentInfo.activeChats - 1);
         await previousAgent.save();
+        
+        // Notify previous agent about reassignment
+        sendToAgent(previousAgent._id.toString(), {
+          type: 'chat_unassigned',
+          chatId: chatId,
+          message: 'Chat has been reassigned to another agent',
+          timestamp: new Date().toISOString()
+        });
       }
     }
 
-    chat.assignedAgent = agentId;
-    chat.status = 'assigned';
-    
-    // Add system message
-    chat.messages.push({
-      messageId: generateMessageId(),
-      sender: 'system',
-      senderId: 'system',
-      senderName: 'System',
-      message: `Chat assigned to agent: ${agent.fullName}`,
-      timestamp: new Date()
-    });
+    // Check if already assigned to this agent
+    const isAlreadyAssigned = chat.assignedAgent && 
+                               chat.assignedAgent.toString() === agentId.toString();
 
-    await chat.save();
+    if (!isAlreadyAssigned) {
+      chat.assignedAgent = agentId;
+      chat.status = chat.status === 'open' ? 'assigned' : chat.status;
+      
+      // Add system message
+      chat.messages.push({
+        messageId: generateMessageId(),
+        sender: 'system',
+        senderId: 'system',
+        senderName: 'System',
+        message: `Chat assigned to agent: ${agent.fullName}`,
+        timestamp: new Date()
+      });
 
-    // Update new agent stats
-    if (agent.agentInfo) {
-      agent.agentInfo.activeChats += 1;
-      agent.agentInfo.totalChats += 1;
-      await agent.save();
-    }
+      await chat.save();
 
-    // Notify agent via WebSocket
-    sendToAgent(agentId.toString(), {
-      type: 'chat_assigned',
-      chat: {
-        chatId: chat.chatId,
-        customerName: chat.customerName,
-        subject: chat.subject,
-        department: chat.department,
-        priority: chat.priority
+      // Update new agent stats
+      if (agent.agentInfo) {
+        if (!isAlreadyAssigned) {
+          agent.agentInfo.activeChats += 1;
+          agent.agentInfo.totalChats += 1;
+        }
+        await agent.save();
       }
-    });
 
-    // Send email notification
-    await sendAgentAssignmentEmail(agent.email, {
-      chatId: chat.chatId,
-      customerName: chat.customerName,
-      subject: chat.subject,
-      department: chat.department,
-      priority: chat.priority
-    });
+      // ========== WEBSOCKET NOTIFICATIONS ==========
+      
+      // 1. Notify the assigned agent
+      sendToAgent(agentId.toString(), {
+        type: 'chat_assigned',
+        chat: {
+          chatId: chat.chatId,
+          customerName: chat.customerName,
+          customerEmail: chat.customerEmail,
+          subject: chat.subject,
+          department: chat.department,
+          priority: chat.priority,
+          status: chat.status,
+          createdAt: chat.createdAt
+        },
+        message: 'New chat has been assigned to you',
+        timestamp: new Date().toISOString()
+      });
 
-    console.log(`👨‍💼 Chat ${chatId} assigned to agent ${agent.fullName}`);
+      // 2. Broadcast to all agents that this chat is now assigned
+      agentConnections.forEach((ws, id) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'chat_updated',
+            chatId: chatId,
+            status: 'assigned',
+            assignedAgent: {
+              id: agentId,
+              name: agent.fullName
+            },
+            timestamp: new Date().toISOString()
+          }));
+        }
+      });
+
+      // 3. Notify customer if connected
+      if (chat.customerId) {
+        sendToCustomer(chat.customerId, {
+          type: 'agent_assigned',
+          chatId: chatId,
+          agentName: agent.fullName,
+          message: `${agent.fullName} has been assigned to help you`,
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      // 4. Broadcast to chat participants
+      broadcastToChat(chatId, {
+        type: 'chat_assigned',
+        chatId: chatId,
+        agentName: agent.fullName,
+        timestamp: new Date().toISOString()
+      });
+
+      console.log(`✅ Chat ${chatId} assigned to agent ${agent.fullName}`);
+    }
 
     res.json({
       success: true,
-      message: 'Chat assigned successfully',
+      message: isAlreadyAssigned ? 'Chat already assigned to this agent' : 'Chat assigned successfully',
       chat: {
         chatId: chat.chatId,
-        assignedAgent: agent.fullName,
+        assignedAgent: {
+          _id: agent._id,
+          fullName: agent.fullName,
+          email: agent.email,
+          agentInfo: agent.agentInfo
+        },
         status: chat.status
       }
     });
@@ -4123,6 +4273,8 @@ app.post('/api/agent/chats/:chatId/assign', authenticateAdmin, async (req, res) 
     res.status(500).json({ success: false, message: 'Failed to assign chat' });
   }
 });
+
+console.log('✅ Enhanced Agent Assignment Endpoint Loaded');
 
 // Update Agent Status
 app.put('/api/agent/status', authenticateAgent, async (req, res) => {
