@@ -1275,20 +1275,22 @@ app.post('/api/auth/login', async (req, res) => {
     console.log(`✅ User logged in: ${user.email}`);
 
     res.json({
-      success: true,
-      message: 'Login successful',
-      token,
-      user: {
+    success: true,
+    message: 'Login successful',
+    token,
+    user: {
         id: user._id,
-        name: user.fullName,
+        fullName: user.fullName,      // ✅ Add fullName
+        name: user.fullName,           // ✅ Keep name for compatibility
         email: user.email,
         phone: user.phone,
         country: user.country,
         profileImage: user.profileImage,
         isAdmin: user.isAdmin,
-        isAgent: user.isAgent
-      }
-    });
+        isAgent: user.isAgent,
+        emailVerified: user.emailVerified  // ✅ Add this too
+    }
+});
     
   } catch (error) {
     console.error('❌ Login error:', error);
