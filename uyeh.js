@@ -1274,24 +1274,76 @@ app.post('/api/auth/login', async (req, res) => {
 
     console.log(`✅ User logged in: ${user.email}`);
 
+ // ========== USER PROFILE ==========
+app.get('/api/profile', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId).select('-password -twoFactorSecret');
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
     res.json({
-    success: true,
-    message: 'Login successful',
-    token,
-    user: {
+      success: true,
+      user: {
         id: user._id,
-        fullName: user.fullName,      // ✅ Add fullName
-        name: user.fullName,           // ✅ Keep name for compatibility
+        name: user.fullName,
         email: user.email,
         phone: user.phone,
         country: user.country,
         profileImage: user.profileImage,
+        bio: user.bio,
         isAdmin: user.isAdmin,
-        isAgent: user.isAgent,
-        emailVerified: user.emailVerified  // ✅ Add this too
-    }
+        isBanned: user.isBanned,
+        emailVerified: user.emailVerified,
+        twoFactorEnabled: user.twoFactorEnabled,
+        createdAt: user.createdAt,
+        lastLogin: user.lastLogin
+      }
+    });
+  } catch (error) {
+    console.error('❌ Profile error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch profile' });
+  }
 });
+
+app.put('/api/profile', authenticateToken, async (req, res) => {
+  try {
+    const { fullName, bio, profileImage, phone, country } = req.body;
+    const user = await User.findById(req.user.userId);
     
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    if (fullName) user.fullName = fullName;
+    if (bio !== undefined) user.bio = bio;
+    if (profileImage) user.profileImage = profileImage;
+    if (phone !== undefined) user.phone = phone;
+    if (country) user.country = country;
+
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Profile updated',
+      user: {
+        id: user._id,
+        name: user.fullName,
+        email: user.email,
+        phone: user.phone,
+        country: user.country,
+        profileImage: user.profileImage,
+        bio: user.bio
+      }
+    });
+  } catch (error) {
+    console.error('❌ Update profile error:', error);
+    res.status(500).json({ success: false, message: 'Update failed' });
+  }
+});
+
+console.log('✅ Part 2 loaded: Auth & User routes configured');
+
   } catch (error) {
     console.error('❌ Login error:', error);
     res.status(500).json({ success: false, message: 'Login failed' });
