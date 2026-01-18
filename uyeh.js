@@ -3,7 +3,6 @@
 // Setup, Configuration, and Core Schemas
 // Admin Email: uyehtech@gmail.com
 
-
 const express = require('express');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
@@ -11,261 +10,21 @@ const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const axios = require('axios');
 const crypto = require('crypto');
-const http = require('http');
-const WebSocket = require('ws');
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
 require('dotenv').config();
-
 const app = express();
-const server = http.createServer(app);
 
-// ═════════════════════════════════════════════════════════════════════════════
-// WEBSOCKET SETUP FOR REAL-TIME CHAT
-// ═════════════════════════════════════════════════════════════════════════════
-
-const wss = new WebSocket.Server({ 
-  server,
-  path: '/ws',
-  verifyClient: (info) => {
-    // Allow all connections - authentication handled in message handler
-    return true;
-  }
-});
-
-// Store active WebSocket connections
-const activeConnections = new Map(); // chatId -> Set of WebSocket connections
-const agentConnections = new Map();  // agentId -> WebSocket connection
-const customerConnections = new Map(); // customerId -> WebSocket connection
-
-// WebSocket connection handler
-wss.on('connection', (ws, req) => {
-  const urlParams = new URLSearchParams(req.url.split('?')[1]);
-  const chatId = urlParams.get('chatId');
-  const agentId = urlParams.get('agentId');
-  const customerId = urlParams.get('customerId');
-  
-  console.log(`\n🔌 WebSocket Connection:`);
-  console.log(`   Chat ID: ${chatId || 'N/A'}`);
-  console.log(`   Agent ID: ${agentId || 'N/A'}`);
-  console.log(`   Customer ID: ${customerId || 'N/A'}`);
-  
-  // Store connection
-  if (chatId) {
-    if (!activeConnections.has(chatId)) {
-      activeConnections.set(chatId, new Set());
-    }
-    activeConnections.get(chatId).add(ws);
-  }
-  
-  if (agentId) {
-    agentConnections.set(agentId, ws);
-  }
-  
-  if (customerId) {
-    customerConnections.set(customerId, ws);
-  }
-  
-  ws.isAlive = true;
-  ws.chatId = chatId;
-  ws.agentId = agentId;
-  ws.customerId = customerId;
-  
-  // Send welcome message
-  ws.send(JSON.stringify({
-    type: 'connected',
-    message: 'Connected to UYEH TECH Support',
-    timestamp: new Date().toISOString()
-  }));
-  
-  // Handle pong
-  ws.on('pong', () => {
-    ws.isAlive = true;
-  });
-  
-  // Handle incoming messages
-  ws.on('message', (message) => {
-    try {
-      const data = JSON.parse(message);
-      console.log(`📨 WebSocket Message:`, data.type);
-      
-      // Handle different message types
-      handleWebSocketMessage(ws, data);
-    } catch (error) {
-      console.error('❌ WebSocket message error:', error);
-      ws.send(JSON.stringify({
-        type: 'error',
-        message: 'Invalid message format'
-      }));
-    }
-  });
-  
-  // Handle disconnection
-  ws.on('close', () => {
-    console.log(`\n🔌 WebSocket Disconnected:`);
-    console.log(`   Chat ID: ${chatId || 'N/A'}`);
-    
-    // Remove from active connections
-    if (chatId && activeConnections.has(chatId)) {
-      activeConnections.get(chatId).delete(ws);
-      if (activeConnections.get(chatId).size === 0) {
-        activeConnections.delete(chatId);
-      }
-    }
-    
-    if (agentId) {
-      agentConnections.delete(agentId);
-    }
-    
-    if (customerId) {
-      customerConnections.delete(customerId);
-    }
-  });
-  
-  ws.on('error', (error) => {
-    console.error('❌ WebSocket error:', error);
-  });
-});
-
-// Heartbeat to keep connections alive
-const heartbeatInterval = setInterval(() => {
-  wss.clients.forEach((ws) => {
-    if (ws.isAlive === false) {
-      return ws.terminate();
-    }
-    ws.isAlive = false;
-    ws.ping();
-  });
-}, 30000); // 30 seconds
-
-wss.on('close', () => {
-  clearInterval(heartbeatInterval);
-});
-
-// Helper function to broadcast to chat
-function broadcastToChat(chatId, message, excludeWs = null) {
-  if (activeConnections.has(chatId)) {
-    const connections = activeConnections.get(chatId);
-    connections.forEach((clientWs) => {
-      if (clientWs !== excludeWs && clientWs.readyState === WebSocket.OPEN) {
-        clientWs.send(JSON.stringify(message));
-      }
-    });
-  }
-}
-
-// Helper function to send to specific agent
-function sendToAgent(agentId, message) {
-  const agentWs = agentConnections.get(agentId);
-  if (agentWs && agentWs.readyState === WebSocket.OPEN) {
-    agentWs.send(JSON.stringify(message));
-  }
-}
-
-// Helper function to send to specific customer
-function sendToCustomer(customerId, message) {
-  const customerWs = customerConnections.get(customerId);
-  if (customerWs && customerWs.readyState === WebSocket.OPEN) {
-    customerWs.send(JSON.stringify(message));
-  }
-}
-
-// Handle WebSocket messages
-function handleWebSocketMessage(ws, data) {
-  switch (data.type) {
-    case 'ping':
-      ws.send(JSON.stringify({ type: 'pong', timestamp: new Date().toISOString() }));
-      break;
-    case 'typing':
-      if (ws.chatId) {
-        broadcastToChat(ws.chatId, {
-          type: 'typing',
-          userId: data.userId || ws.customerId || ws.agentId,
-          isTyping: data.isTyping
-        }, ws);
-      }
-      break;
-    default:
-      console.log(`⚠️ Unhandled message type: ${data.type}`);
-  }
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// MIDDLEWARE CONFIGURATION
-// ═════════════════════════════════════════════════════════════════════════════
-
+// ========== MIDDLEWARE ==========
 app.use(cors({
   origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  credentials: true
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
-
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Static files for uploads
-const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-  console.log('📁 Created uploads directory');
-}
-
-app.use('/uploads', express.static(uploadsDir));
-
-// Request logging middleware
-app.use((req, res, next) => {
-  const timestamp = new Date().toISOString();
-  console.log(`\n[${timestamp}] ${req.method} ${req.path}`);
-  next();
-});
-
-// ═════════════════════════════════════════════════════════════════════════════
-// MULTER CONFIGURATION FOR FILE UPLOADS
-// ═════════════════════════════════════════════════════════════════════════════
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadsDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const sanitizedFilename = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
-    cb(null, uniqueSuffix + '-' + sanitizedFilename);
-  }
-});
-
-const fileFilter = (req, file, cb) => {
-  const allowedMimes = [
-    'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
-    'application/pdf',
-    'application/msword',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'text/plain'
-  ];
-  
-  if (allowedMimes.includes(file.mimetype)) {
-    cb(null, true);
-  } else {
-    cb(new Error('Invalid file type. Only images, PDFs, and documents are allowed.'), false);
-  }
-};
-
-const upload = multer({
-  storage: storage,
-  limits: { 
-    fileSize: 10 * 1024 * 1024, // 10MB limit
-    files: 5 // Maximum 5 files per request
-  },
-  fileFilter: fileFilter
-});
-// ═════════════════════════════════════════════════════════════════════════════
-// ENVIRONMENT CONFIGURATION
-// ═════════════════════════════════════════════════════════════════════════════
-
+// ========== CONFIGURATION ==========
 const MONGO_URI = process.env.MONGO_URI;
-const JWT_SECRET = process.env.JWT_SECRET || 'default-jwt-secret-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET;
 const TERMII_API_KEY = process.env.TERMII_API_KEY;
 const TERMII_EMAIL_CONFIG_ID = '4de5e6c7-415f-43f1-812a-0bbbb213c126';
 const TERMII_BASE_URL = 'https://v3.api.termii.com';
@@ -273,62 +32,23 @@ const TERMII_SENDER_EMAIL = process.env.TERMII_SENDER_EMAIL || 'noreply@uyehtech
 const FLUTTERWAVE_SECRET_KEY = process.env.FLUTTERWAVE_SECRET_KEY;
 const ADMIN_EMAIL = 'uyehtech@gmail.com';
 const PORT = process.env.PORT || 3000;
-const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 
-// ═════════════════════════════════════════════════════════════════════════════
-// STARTUP VALIDATION & BANNER
-// ═════════════════════════════════════════════════════════════════════════════
-
-console.log('\n╔═══════════════════════════════════════════════════════════════════════════╗');
-console.log('║              🚀 UYEH TECH SERVER v7.0 - INITIALIZING                    ║');
-console.log('╚═══════════════════════════════════════════════════════════════════════════╝\n');
-
+// ========== STARTUP VALIDATION ==========
+console.log('\n╔═══════════════════════════════════════════════════════════════╗');
+console.log('║     UYEH TECH SERVER v6.0 - ADMIN DASHBOARD + DOWNLOADS     ║');
+console.log('╚═══════════════════════════════════════════════════════════════╝\n');
 console.log('📋 Configuration Status:');
-console.log('  ├─ MongoDB:', MONGO_URI ? '✅ Configured' : '❌ Missing (REQUIRED)');
-console.log('  ├─ JWT Secret:', JWT_SECRET !== 'default-jwt-secret-change-in-production' ? '✅ Configured' : '⚠️  Using Default (Change in Production)');
-console.log('  ├─ Termii API:', TERMII_API_KEY ? '✅ Configured' : '⚠️  Missing (Email disabled)');
-console.log('  ├─ Flutterwave:', FLUTTERWAVE_SECRET_KEY ? '✅ Configured' : '⚠️  Missing (Payments disabled)');
-console.log('  └─ Admin Email:', ADMIN_EMAIL, '\n');
+console.log('  MongoDB:', MONGO_URI ? '✅ Connected' : '❌ Missing');
+console.log('  JWT Secret:', JWT_SECRET ? '✅ Configured' : '❌ Missing');
+console.log('  Termii API:', TERMII_API_KEY ? '✅ Configured' : '❌ Missing');
+console.log('  Flutterwave:', FLUTTERWAVE_SECRET_KEY ? '✅ Configured' : '❌ Missing');
+console.log('  Admin Email:', ADMIN_EMAIL);
+console.log('\n🎉 NEW in v6.0: Download Links + Admin Dashboard\n');
 
-console.log('🎉 NEW FEATURES IN v7.0:');
-console.log('  ✨ Real-time Customer Chat with WebSocket');
-console.log('  ✨ Support Ticket System');
-console.log('  ✨ Agent Dashboard with Live Chat');
-console.log('  ✨ File Upload Support (Images, PDFs, Docs)');
-console.log('  ✨ Complete Frontend Integration');
-console.log('  ✨ Enhanced Error Handling & Logging\n');
-
-// ═════════════════════════════════════════════════════════════════════════════
-// CONNECT TO MONGODB
-// ═════════════════════════════════════════════════════════════════════════════
-
-if (!MONGO_URI) {
-  console.error('❌ FATAL: MONGO_URI not configured in .env file');
-  console.log('📝 Please add MONGO_URI to your .env file');
-  process.exit(1);
-}
-
-mongoose.connect(MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-})
-  .then(() => {
-    console.log('✅ MongoDB Connected Successfully');
-    console.log(`   Database: ${mongoose.connection.name}`);
-  })
-  .catch(err => {
-    console.error('❌ MongoDB Connection Error:', err.message);
-    process.exit(1);
-  });
-
-// MongoDB connection event handlers
-mongoose.connection.on('disconnected', () => {
-  console.warn('⚠️  MongoDB Disconnected');
-});
-
-mongoose.connection.on('reconnected', () => {
-  console.log('✅ MongoDB Reconnected');
-});
+// ========== CONNECT TO MONGODB ==========
+mongoose.connect(MONGO_URI)
+  .then(() => console.log('✅ MongoDB Connected Successfully'))
+  .catch(err => console.error('❌ MongoDB Connection Error:', err));
 
 // ========== USER SCHEMA ==========
 const userSchema = new mongoose.Schema({
@@ -352,21 +72,10 @@ const userSchema = new mongoose.Schema({
     marketing: { type: Boolean, default: false }
   },
   isAdmin: { type: Boolean, default: false },
-  isAgent: { type: Boolean, default: false }, // NEW: Agent role
-  agentInfo: { // NEW: Agent-specific information
-    department: { type: String, enum: ['Sales', 'Support', 'Technical', 'Billing', 'General'] },
-    status: { type: String, enum: ['online', 'offline', 'busy', 'away'], default: 'offline' },
-    activeChats: { type: Number, default: 0 },
-    maxChats: { type: Number, default: 5 },
-    rating: { type: Number, default: 0, min: 0, max: 5 },
-    totalChats: { type: Number, default: 0 },
-    resolvedChats: { type: Number, default: 0 }
-  },
   isBanned: { type: Boolean, default: false },
   banReason: String,
   createdAt: { type: Date, default: Date.now },
   lastLogin: Date,
-  lastActivity: Date, // NEW: Track user activity
   updatedAt: { type: Date, default: Date.now }
 });
 
@@ -377,11 +86,6 @@ userSchema.pre('save', function(next) {
   }
   next();
 });
-
-userSchema.index({ email: 1 });
-userSchema.index({ isAdmin: 1 });
-userSchema.index({ isAgent: 1 });
-userSchema.index({ createdAt: -1 });
 
 const User = mongoose.model('User', userSchema);
 
@@ -555,63 +259,6 @@ blogPostSchema.pre('save', function(next) {
 
 const BlogPost = mongoose.model('BlogPost', blogPostSchema);
 
-// ──────────────────────────────────────────────────────────────────────────────
-// CHAT/SUPPORT TICKET SCHEMA (NEW)
-// ──────────────────────────────────────────────────────────────────────────────
-
-const chatSchema = new mongoose.Schema({
-  chatId: { type: String, required: true, unique: true },
-  customerId: { type: String, required: true },
-  customerName: { type: String, required: true },
-  customerEmail: { type: String, required: true },
-  subject: { type: String, required: true },
-  department: { type: String, enum: ['Sales', 'Support', 'Technical', 'Billing', 'General'], default: 'General' },
-  priority: { type: String, enum: ['low', 'medium', 'high', 'urgent'], default: 'medium' },
-  status: { type: String, enum: ['open', 'assigned', 'in-progress', 'resolved', 'closed'], default: 'open' },
-  assignedAgent: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  messages: [{
-    messageId: { type: String, required: true },
-    sender: { type: String, enum: ['customer', 'agent', 'system'], required: true },
-    senderId: String,
-    senderName: String,
-    message: String,
-    attachments: [{
-      filename: String,
-      url: String,
-      fileType: String,
-      fileSize: Number
-    }],
-    timestamp: { type: Date, default: Date.now },
-    read: { type: Boolean, default: false }
-  }],
-  tags: [String],
-  rating: { type: Number, min: 1, max: 5 },
-  feedback: String,
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now },
-  closedAt: Date,
-  resolvedAt: Date,
-  firstResponseTime: Number, // Time in minutes
-  averageResponseTime: Number, // Time in minutes
-  totalMessages: { type: Number, default: 0 }
-});
-
-chatSchema.pre('save', function(next) {
-  this.updatedAt = Date.now();
-  this.totalMessages = this.messages.length;
-  next();
-});
-
-chatSchema.index({ chatId: 1 });
-chatSchema.index({ customerId: 1 });
-chatSchema.index({ customerEmail: 1 });
-chatSchema.index({ status: 1 });
-chatSchema.index({ assignedAgent: 1 });
-chatSchema.index({ department: 1 });
-chatSchema.index({ createdAt: -1 });
-
-const Chat = mongoose.model('Chat', chatSchema);
-
 // ========== SYSTEM SETTINGS SCHEMA ==========
 const systemSettingsSchema = new mongoose.Schema({
   siteName: { type: String, default: 'UYEH TECH' },
@@ -651,10 +298,8 @@ const systemSettingsSchema = new mongoose.Schema({
 });
 
 const SystemSettings = mongoose.model('SystemSettings', systemSettingsSchema);
-// ──────────────────────────────────────────────────────────────────────────────
-// ANALYTICS SCHEMA
-// ──────────────────────────────────────────────────────────────────────────────
 
+// ========== ANALYTICS SCHEMA ==========
 const analyticsSchema = new mongoose.Schema({
   date: { type: Date, required: true, index: true },
   pageViews: { type: Number, default: 0 },
@@ -663,8 +308,6 @@ const analyticsSchema = new mongoose.Schema({
   orders: { type: Number, default: 0 },
   revenue: { type: Number, default: 0 },
   downloads: { type: Number, default: 0 },
-  chatsStarted: { type: Number, default: 0 }, // NEW
-  chatsResolved: { type: Number, default: 0 }, // NEW
   topProducts: [{
     productId: String,
     productName: String,
@@ -680,7 +323,6 @@ const analyticsSchema = new mongoose.Schema({
 analyticsSchema.index({ date: -1 });
 
 const Analytics = mongoose.model('Analytics', analyticsSchema);
-
 
 // ========== EMAIL OTP STORAGE ==========
 const otpStore = new Map();
@@ -698,65 +340,8 @@ function generateSlug(text) {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
-function generateChatId() {
-  return 'CHAT-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9).toUpperCase();
-}
-
-function generateMessageId() {
-  return 'MSG-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9).toUpperCase();
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// EXPORT FOR USE IN OTHER PARTS
-// ═════════════════════════════════════════════════════════════════════════════
-
-// Models
-global.User = User;
-global.Order = Order;
-global.PaymentMethod = PaymentMethod;
-global.Coupon = Coupon;
-global.Product = Product;
-global.Download = Download;
-global.Chat = Chat;
-global.BlogPost = BlogPost;
-global.SystemSettings = SystemSettings;
-global.Analytics = Analytics;
-
-// WebSocket functions
-global.broadcastToChat = broadcastToChat;
-global.sendToAgent = sendToAgent;
-global.sendToCustomer = sendToCustomer;
-global.activeConnections = activeConnections;
-global.agentConnections = agentConnections;
-global.customerConnections = customerConnections;
-
-// Utility functions
-global.generateToken = generateToken;
-global.generateOTP = generateOTP;
-global.generateSlug = generateSlug;
-global.generateChatId = generateChatId;
-global.generateMessageId = generateMessageId;
-global.otpStore = otpStore;
-
-// Configuration
-global.JWT_SECRET = JWT_SECRET;
-global.TERMII_API_KEY = TERMII_API_KEY;
-global.TERMII_EMAIL_CONFIG_ID = TERMII_EMAIL_CONFIG_ID;
-global.TERMII_BASE_URL = TERMII_BASE_URL;
-global.TERMII_SENDER_EMAIL = TERMII_SENDER_EMAIL;
-global.FLUTTERWAVE_SECRET_KEY = FLUTTERWAVE_SECRET_KEY;
-global.ADMIN_EMAIL = ADMIN_EMAIL;
-global.BASE_URL = BASE_URL;
-
-// Express app and server
-global.app = app;
-global.server = server;
-global.upload = upload;
-
-
-console.log('\n✅ Part 1 Loaded: Schemas, Configuration & WebSocket Ready');
-console.log('📦 Models: User, Order, Coupon, Product, Download, Chat, Blog, Analytics, Settings');
-console.log('🔌 WebSocket: Ready for real-time chat connections\n');
+console.log('✅ Part 1 loaded: All Schemas configured with Download support');
+console.log('📦 Models: User, Order, Coupon, Product, Download, Blog, Analytics, Settings');
 
 // ========== END OF PART 1 ==========
 // Continue to Part 2 for Email Functions and Auth Routes// ========== UYEH TECH SERVER v6.0 - PART 2 OF 6 ==========
@@ -867,65 +452,6 @@ UYEH TECH Team
   }
 }
 
-// Send Chat Assignment Notification to Agent
-async function sendAgentAssignmentEmail(agentEmail, chatInfo) {
-  try {
-    if (!TERMII_API_KEY) {
-      console.log(`📧 Agent assignment notification: ${chatInfo.chatId} (Email service disabled)`);
-      return { success: true, method: 'console_log' };
-    }
-   
-    const subject = `New Chat Assigned - ${chatInfo.chatId}`;
-    const emailBody = `
-Hello!
-
-A new support chat has been assigned to you.
-
-Chat ID: ${chatInfo.chatId}
-Customer: ${chatInfo.customerName}
-Subject: ${chatInfo.subject}
-Department: ${chatInfo.department}
-Priority: ${chatInfo.priority}
-
-Please log in to the Agent Dashboard to respond to this chat.
-
-Best regards,
-UYEH TECH Support System
-    `.trim();
-
-    try {
-      await axios.post(`${TERMII_BASE_URL}/api/send-mail`, {
-        api_key: TERMII_API_KEY,
-        to: agentEmail,
-        from: TERMII_SENDER_EMAIL,
-        subject: subject,
-        body: emailBody,
-        email_configuration_id: TERMII_EMAIL_CONFIG_ID
-      }, {
-        headers: { 'Content-Type': 'application/json' },
-        timeout: 15000
-      });
-     
-      console.log('✅ Agent assignment email sent');
-      return { success: true, method: 'termii_email' };
-     
-    } catch (error) {
-      console.log(`📧 Agent assignment logged (Termii failed)`);
-      return { success: true, method: 'console_log' };
-    }
-   
-  } catch (error) {
-    console.error('❌ Send agent assignment error:', error);
-    return { success: false, error: error.message };
-  }
-}
-
-// Export email functions
-global.sendEmailOTP = sendEmailOTP;
-global.sendOrderConfirmationEmail = sendOrderConfirmationEmail;
-global.sendAgentAssignmentEmail = sendAgentAssignmentEmail;
-
-
 // ========== MIDDLEWARE: AUTHENTICATE TOKEN ==========
 function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
@@ -977,238 +503,136 @@ async function authenticateAdmin(req, res, next) {
     }
   });
 }
-// Authenticate Agent
-async function authenticateAgent(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-
-  if (!token) {
-    return res.status(401).json({ success: false, message: 'Agent token required' });
-  }
-
-  jwt.verify(token, JWT_SECRET, async (err, decoded) => {
-    if (err) {
-      return res.status(403).json({ success: false, message: 'Invalid or expired token' });
-    }
-
-    try {
-      const user = await User.findById(decoded.userId);
-      
-      if (!user || (!user.isAgent && !user.isAdmin)) {
-        return res.status(403).json({ 
-          success: false, 
-          message: 'Agent access required',
-          isAgent: false 
-        });
-      }
-
-      // Update agent status
-      if (user.isAgent) {
-        user.lastActivity = new Date();
-        await user.save();
-      }
-
-      req.user = decoded;
-      req.agentUser = user;
-      next();
-    } catch (error) {
-      console.error('❌ Agent auth error:', error);
-      return res.status(500).json({ success: false, message: 'Authentication failed' });
-    }
-  });
-}
-
-// Export middleware
-global.authenticateToken = authenticateToken;
-global.authenticateAdmin = authenticateAdmin;
-global.authenticateAgent = authenticateAgent;
 
 // ========== ROUTES ==========
 app.get('/', (req, res) => {
   res.json({
     message: '🚀 UYEH TECH API v6.0 - Admin Dashboard + Downloads',
-    version: '7.0.0',
+    version: '6.0.0',
     status: 'active',
     adminEmail: ADMIN_EMAIL,
     features: [
       '✅ Complete Admin Dashboard',
-      '✅ Real-time Chat System with WebSocket',
-      '✅ Agent Dashboard & Management',
-      '✅ Support Ticket System',
-      '✅ File Upload Support',
       '✅ Download Link Management',
-      '✅ Download Tracking & Analytics',
+      '✅ Download Tracking',
+      '✅ Analytics System',
       '✅ User Management',
       '✅ Order Management',
       '✅ Coupon System',
       '✅ Blog Management',
       '✅ Product Management',
-      '✅ System Settings',
-      '✅ Payment Integration (Flutterwave)',
-      '✅ Email Notifications (Termii)'
+      '✅ System Settings'
     ]
   });
 });
 
-// Health check endpoint
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
-    websocket: {
-      active: wss.clients.size,
-      chats: activeConnections.size,
-      agents: agentConnections.size,
-      customers: customerConnections.size
-    }
-  });
-});
-
 // ========== AUTH ROUTES ==========
-
-// Send Email Verification OTP
 app.post('/api/auth/send-email-otp', async (req, res) => {
   try {
     const { email } = req.body;
-    
     if (!email) {
-      return res.status(400).json({ success: false, message: 'Email is required' });
+      return res.status(400).json({ success: false, message: 'Email required' });
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-      return res.status(400).json({ success: false, message: 'Invalid email format' });
+      return res.status(400).json({ success: false, message: 'Invalid email' });
     }
 
     const cleanEmail = email.toLowerCase().trim();
     const otp = generateOTP();
    
-    // Store OTP in memory with expiration
     otpStore.set(cleanEmail, {
       code: otp,
-      expires: Date.now() + 10 * 60 * 1000, // 10 minutes
-      attempts: 0,
-      maxAttempts: 5
+      expires: Date.now() + 10 * 60 * 1000,
+      attempts: 0
     });
 
-    // Send email
     await sendEmailOTP(cleanEmail, otp, 'verification');
 
     res.json({
       success: true,
-      message: 'Verification code sent to your email',
+      message: 'Verification code sent',
       email: cleanEmail,
-      expiresIn: '10 minutes',
       ...(process.env.NODE_ENV === 'development' && { debug_otp: otp })
     });
-    
   } catch (error) {
     console.error('❌ Send OTP error:', error);
-    res.status(500).json({ success: false, message: 'Failed to send verification code' });
+    res.status(500).json({ success: false, message: 'Failed to send code' });
   }
 });
 
-// Verify Email OTP
 app.post('/api/auth/verify-email-otp', async (req, res) => {
   try {
     const { email, code } = req.body;
-    
     if (!email || !code) {
-      return res.status(400).json({ success: false, message: 'Email and code are required' });
+      return res.status(400).json({ success: false, message: 'Email and code required' });
     }
 
     const cleanEmail = email.toLowerCase().trim();
     const storedOTP = otpStore.get(cleanEmail);
 
     if (!storedOTP) {
-      return res.status(400).json({ success: false, message: 'No verification code found. Please request a new one.' });
+      return res.status(400).json({ success: false, message: 'No code found' });
     }
 
     if (Date.now() > storedOTP.expires) {
       otpStore.delete(cleanEmail);
-      return res.status(400).json({ success: false, message: 'Verification code expired. Please request a new one.' });
+      return res.status(400).json({ success: false, message: 'Code expired' });
     }
 
-    if (storedOTP.attempts >= storedOTP.maxAttempts) {
+    if (storedOTP.attempts >= 5) {
       otpStore.delete(cleanEmail);
-      return res.status(400).json({ success: false, message: 'Too many incorrect attempts. Please request a new code.' });
+      return res.status(400).json({ success: false, message: 'Too many attempts' });
     }
 
-    if (storedOTP.code !== code.trim()) {
+    if (storedOTP.code !== code) {
       storedOTP.attempts += 1;
       otpStore.set(cleanEmail, storedOTP);
-      const attemptsLeft = storedOTP.maxAttempts - storedOTP.attempts;
-      return res.status(400).json({ 
-        success: false, 
-        message: `Invalid verification code. ${attemptsLeft} attempt(s) remaining.` 
-      });
+      return res.status(400).json({ success: false, message: 'Invalid code' });
     }
 
-    // Code is valid
     otpStore.delete(cleanEmail);
-    res.json({ 
-      success: true, 
-      message: 'Email verified successfully!',
-      verified: true
-    });
-    
+    res.json({ success: true, message: 'Email verified' });
   } catch (error) {
     console.error('❌ Verify OTP error:', error);
     res.status(500).json({ success: false, message: 'Verification failed' });
   }
 });
 
-// User Signup
 app.post('/api/auth/signup', async (req, res) => {
   try {
-    const { fullName, email, password, phone, country, emailVerified } = req.body;
+    const { fullName, email, password, emailVerified } = req.body;
 
-    // Validation
     if (!fullName || !email || !password) {
-      return res.status(400).json({ success: false, message: 'Full name, email, and password are required' });
+      return res.status(400).json({ success: false, message: 'All fields required' });
     }
 
     if (!emailVerified) {
-      return res.status(400).json({ success: false, message: 'Please verify your email first' });
+      return res.status(400).json({ success: false, message: 'Verify email first' });
     }
 
-    // Check if user already exists
     const existingUser = await User.findOne({ email: email.toLowerCase() });
     if (existingUser) {
-      return res.status(400).json({ success: false, message: 'Email is already registered' });
+      return res.status(400).json({ success: false, message: 'Email already registered' });
     }
 
-    // Password validation
     if (password.length < 8) {
-      return res.status(400).json({ success: false, message: 'Password must be at least 8 characters long' });
+      return res.status(400).json({ success: false, message: 'Password must be 8+ characters' });
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create new user
     const user = new User({
-      fullName: fullName.trim(),
-      email: email.toLowerCase().trim(),
+      fullName,
+      email: email.toLowerCase(),
       password: hashedPassword,
-      phone: phone || '',
-      country: country || '',
-      emailVerified: true,
-      lastLogin: new Date()
+      emailVerified: true
     });
 
     await user.save();
 
-    // Generate JWT token
-    const token = jwt.sign(
-      { userId: user._id, email: user.email }, 
-      JWT_SECRET, 
-      { expiresIn: '7d' }
-    );
-
-    console.log(`✅ New user registered: ${user.email}`);
+    const token = jwt.sign({ userId: user._id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
 
     res.status(201).json({
       success: true,
@@ -1218,220 +642,111 @@ app.post('/api/auth/signup', async (req, res) => {
         id: user._id,
         name: user.fullName,
         email: user.email,
-        phone: user.phone,
-        country: user.country,
-        isAdmin: user.isAdmin,
-        isAgent: user.isAgent
+        isAdmin: user.isAdmin
       }
     });
-    
   } catch (error) {
     console.error('❌ Signup error:', error);
-    res.status(500).json({ success: false, message: 'Account creation failed' });
+    res.status(500).json({ success: false, message: 'Signup failed' });
   }
 });
 
-// User Login
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
     if (!email || !password) {
-      return res.status(400).json({ success: false, message: 'Email and password are required' });
+      return res.status(400).json({ success: false, message: 'Email and password required' });
     }
 
-    // Find user
     const user = await User.findOne({ email: email.toLowerCase() });
     if (!user) {
-      return res.status(401).json({ success: false, message: 'Invalid email or password' });
+      return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 
-    // Check if banned
     if (user.isBanned) {
-      return res.status(403).json({ 
-        success: false, 
-        message: `Account is banned. Reason: ${user.banReason || 'Please contact support'}` 
-      });
+      return res.status(403).json({ success: false, message: `Account banned: ${user.banReason || 'Contact support'}` });
     }
 
-    // Verify password
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
-      return res.status(401).json({ success: false, message: 'Invalid email or password' });
+      return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 
-    // Update last login
     user.lastLogin = new Date();
-    user.lastActivity = new Date();
     await user.save();
 
-    // Generate JWT token
-    const token = jwt.sign(
-      { userId: user._id, email: user.email }, 
-      JWT_SECRET, 
-      { expiresIn: '7d' }
-    );
-
-    console.log(`✅ User logged in: ${user.email}`);
-
- // ========== USER PROFILE ==========
-app.get('/api/profile', authenticateToken, async (req, res) => {
-  try {
-    const user = await User.findById(req.user.userId).select('-password -twoFactorSecret');
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
+    const token = jwt.sign({ userId: user._id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
 
     res.json({
       success: true,
+      message: 'Login successful',
+      token,
       user: {
         id: user._id,
         name: user.fullName,
         email: user.email,
-        phone: user.phone,
-        country: user.country,
-        profileImage: user.profileImage,
-        bio: user.bio,
-        isAdmin: user.isAdmin,
-        isBanned: user.isBanned,
-        emailVerified: user.emailVerified,
-        twoFactorEnabled: user.twoFactorEnabled,
-        createdAt: user.createdAt,
-        lastLogin: user.lastLogin
+        isAdmin: user.isAdmin
       }
     });
-  } catch (error) {
-    console.error('❌ Profile error:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch profile' });
-  }
-});
-
-app.put('/api/profile', authenticateToken, async (req, res) => {
-  try {
-    const { fullName, bio, profileImage, phone, country } = req.body;
-    const user = await User.findById(req.user.userId);
-    
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-
-    if (fullName) user.fullName = fullName;
-    if (bio !== undefined) user.bio = bio;
-    if (profileImage) user.profileImage = profileImage;
-    if (phone !== undefined) user.phone = phone;
-    if (country) user.country = country;
-
-    await user.save();
-
-    res.json({
-      success: true,
-      message: 'Profile updated',
-      user: {
-        id: user._id,
-        name: user.fullName,
-        email: user.email,
-        phone: user.phone,
-        country: user.country,
-        profileImage: user.profileImage,
-        bio: user.bio
-      }
-    });
-  } catch (error) {
-    console.error('❌ Update profile error:', error);
-    res.status(500).json({ success: false, message: 'Update failed' });
-  }
-});
-
-console.log('✅ Part 2 loaded: Auth & User routes configured');
-
   } catch (error) {
     console.error('❌ Login error:', error);
     res.status(500).json({ success: false, message: 'Login failed' });
   }
 });
 
-// Forgot Password - Request Reset Code
 app.post('/api/auth/forgot-password', async (req, res) => {
   try {
     const { email } = req.body;
-    
     if (!email) {
-      return res.status(400).json({ success: false, message: 'Email is required' });
+      return res.status(400).json({ success: false, message: 'Email required' });
     }
 
-    const cleanEmail = email.toLowerCase().trim();
-    const user = await User.findOne({ email: cleanEmail });
-    
-    // For security, always return success even if user doesn't exist
+    const user = await User.findOne({ email: email.toLowerCase() });
     if (!user) {
-      return res.json({ 
-        success: true, 
-        message: 'If an account exists with this email, a reset code has been sent' 
-      });
+      return res.json({ success: true, message: 'If account exists, code sent' });
     }
 
     const resetOTP = generateOTP();
    
-    // Store reset OTP
-    otpStore.set(`reset_${cleanEmail}`, {
+    otpStore.set(`reset_${email.toLowerCase()}`, {
       code: resetOTP,
-      expires: Date.now() + 10 * 60 * 1000, // 10 minutes
-      attempts: 0,
-      maxAttempts: 5
+      expires: Date.now() + 10 * 60 * 1000,
+      attempts: 0
     });
 
-    // Send reset email
-    await sendEmailOTP(cleanEmail, resetOTP, 'password-reset');
+    await sendEmailOTP(email, resetOTP, 'password-reset');
 
-    res.json({ 
-      success: true, 
-      message: 'Password reset code sent to your email',
-      expiresIn: '10 minutes'
-    });
-    
+    res.json({ success: true, message: 'Reset code sent' });
   } catch (error) {
     console.error('❌ Forgot password error:', error);
     res.status(500).json({ success: false, message: 'Request failed' });
   }
 });
 
-// Reset Password with Code
 app.post('/api/auth/reset-password', async (req, res) => {
   try {
     const { email, code, newPassword } = req.body;
 
     if (!email || !code || !newPassword) {
-      return res.status(400).json({ success: false, message: 'Email, code, and new password are required' });
+      return res.status(400).json({ success: false, message: 'All fields required' });
     }
 
     if (newPassword.length < 8) {
-      return res.status(400).json({ success: false, message: 'Password must be at least 8 characters long' });
+      return res.status(400).json({ success: false, message: 'Password must be 8+ characters' });
     }
 
     const cleanEmail = email.toLowerCase().trim();
     const storedOTP = otpStore.get(`reset_${cleanEmail}`);
 
-    if (!storedOTP) {
-      return res.status(400).json({ success: false, message: 'No reset code found. Please request a new one.' });
+    if (!storedOTP || Date.now() > storedOTP.expires) {
+      return res.status(400).json({ success: false, message: 'Invalid or expired code' });
     }
 
-    if (Date.now() > storedOTP.expires) {
-      otpStore.delete(`reset_${cleanEmail}`);
-      return res.status(400).json({ success: false, message: 'Reset code expired. Please request a new one.' });
+    if (storedOTP.code !== code) {
+      return res.status(400).json({ success: false, message: 'Invalid code' });
     }
 
-    if (storedOTP.attempts >= storedOTP.maxAttempts) {
-      otpStore.delete(`reset_${cleanEmail}`);
-      return res.status(400).json({ success: false, message: 'Too many incorrect attempts. Please request a new code.' });
-    }
-
-    if (storedOTP.code !== code.trim()) {
-      storedOTP.attempts += 1;
-      otpStore.set(`reset_${cleanEmail}`, storedOTP);
-      return res.status(400).json({ success: false, message: 'Invalid reset code' });
-    }
-
-    // Find user and update password
     const user = await User.findOne({ email: cleanEmail });
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
@@ -1440,119 +755,12 @@ app.post('/api/auth/reset-password', async (req, res) => {
     user.password = await bcrypt.hash(newPassword, 10);
     await user.save();
 
-    // Clear reset OTP
     otpStore.delete(`reset_${cleanEmail}`);
 
-    console.log(`✅ Password reset successful: ${user.email}`);
-
-    res.json({ 
-      success: true, 
-      message: 'Password reset successfully! You can now login with your new password.' 
-    });
-    
+    res.json({ success: true, message: 'Password reset successfully' });
   } catch (error) {
     console.error('❌ Reset password error:', error);
-    res.status(500).json({ success: false, message: 'Password reset failed' });
-  }
-});
-
-// Change Password (Authenticated)
-app.post('/api/auth/change-password', authenticateToken, async (req, res) => {
-  try {
-    const { currentPassword, newPassword } = req.body;
-
-    if (!currentPassword || !newPassword) {
-      return res.status(400).json({ success: false, message: 'Current and new password are required' });
-    }
-
-    if (newPassword.length < 8) {
-      return res.status(400).json({ success: false, message: 'New password must be at least 8 characters long' });
-    }
-
-    const user = await User.findById(req.user.userId);
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-
-    // Verify current password
-    const isPasswordValid = await bcrypt.compare(currentPassword, user.password);
-    if (!isPasswordValid) {
-      return res.status(401).json({ success: false, message: 'Current password is incorrect' });
-    }
-
-    // Update to new password
-    user.password = await bcrypt.hash(newPassword, 10);
-    await user.save();
-
-    console.log(`✅ Password changed: ${user.email}`);
-
-    res.json({ success: true, message: 'Password changed successfully' });
-    
-  } catch (error) {
-    console.error('❌ Change password error:', error);
-    res.status(500).json({ success: false, message: 'Password change failed' });
-  }
-});
-
-// Delete Account
-app.delete('/api/auth/delete-account', authenticateToken, async (req, res) => {
-  try {
-    const { password } = req.body;
-
-    if (!password) {
-      return res.status(400).json({ success: false, message: 'Password is required to delete account' });
-    }
-
-    const user = await User.findById(req.user.userId);
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-
-    // Verify password
-    const isPasswordValid = await bcrypt.compare(password, user.password);
-    if (!isPasswordValid) {
-      return res.status(401).json({ success: false, message: 'Incorrect password' });
-    }
-
-    // Delete user
-    await User.findByIdAndDelete(req.user.userId);
-
-    console.log(`✅ Account deleted: ${user.email}`);
-
-    res.json({ success: true, message: 'Account deleted successfully' });
-    
-  } catch (error) {
-    console.error('❌ Delete account error:', error);
-    res.status(500).json({ success: false, message: 'Account deletion failed' });
-  }
-});
-
-// Toggle Two-Factor Authentication
-app.post('/api/auth/toggle-2fa', authenticateToken, async (req, res) => {
-  try {
-    const { enable } = req.body;
-    
-    const user = await User.findById(req.user.userId);
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-
-    user.twoFactorEnabled = enable === true;
-    if (!enable) {
-      user.twoFactorSecret = null;
-    }
-    
-    await user.save();
-
-    res.json({ 
-      success: true, 
-      message: `Two-factor authentication ${enable ? 'enabled' : 'disabled'}`,
-      twoFactorEnabled: user.twoFactorEnabled
-    });
-    
-  } catch (error) {
-    console.error('❌ Toggle 2FA error:', error);
-    res.status(500).json({ success: false, message: '2FA toggle failed' });
+    res.status(500).json({ success: false, message: 'Reset failed' });
   }
 });
 
@@ -1601,85 +809,6 @@ app.get('/api/auth/admin/verify', authenticateAdmin, async (req, res) => {
       id: req.adminUser._id,
       name: req.adminUser.fullName,
       email: req.adminUser.email
-    }
-  });
-});
-
-
-// ═════════════════════════════════════════════════════════════════════════════
-// AGENT AUTHENTICATION (NEW)
-// ═════════════════════════════════════════════════════════════════════════════
-
-// Agent Login
-app.post('/api/auth/agent/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({ success: false, message: 'Email and password are required' });
-    }
-
-    const user = await User.findOne({ email: email.toLowerCase() });
-    
-    if (!user || (!user.isAgent && !user.isAdmin)) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Agent access required', 
-        isAgent: false 
-      });
-    }
-
-    const isPasswordValid = await bcrypt.compare(password, user.password);
-    if (!isPasswordValid) {
-      return res.status(401).json({ success: false, message: 'Invalid credentials' });
-    }
-
-    user.lastLogin = new Date();
-    user.lastActivity = new Date();
-    if (user.isAgent && user.agentInfo) {
-      user.agentInfo.status = 'online';
-    }
-    await user.save();
-
-    const token = jwt.sign(
-      { userId: user._id, email: user.email }, 
-      JWT_SECRET, 
-      { expiresIn: '12h' }
-    );
-
-    console.log(`✅ Agent logged in: ${user.email}`);
-
-    res.json({
-      success: true,
-      message: 'Agent login successful',
-      token,
-      isAgent: true,
-      isAdmin: user.isAdmin,
-      user: {
-        id: user._id,
-        name: user.fullName,
-        email: user.email,
-        agentInfo: user.agentInfo
-      }
-    });
-    
-  } catch (error) {
-    console.error('❌ Agent login error:', error);
-    res.status(500).json({ success: false, message: 'Login failed' });
-  }
-});
-
-// Verify Agent Token
-app.get('/api/auth/agent/verify', authenticateAgent, async (req, res) => {
-  res.json({
-    success: true,
-    isAgent: true,
-    isAdmin: req.agentUser.isAdmin,
-    user: {
-      id: req.agentUser._id,
-      name: req.agentUser.fullName,
-      email: req.agentUser.email,
-      agentInfo: req.agentUser.agentInfo
     }
   });
 });
@@ -1751,132 +880,8 @@ app.put('/api/profile', authenticateToken, async (req, res) => {
     res.status(500).json({ success: false, message: 'Update failed' });
   }
 });
-// Get Notification Preferences
-app.get('/api/user/notifications', authenticateToken, async (req, res) => {
-  try {
-    const user = await User.findById(req.user.userId);
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
 
-    res.json({
-      success: true,
-      preferences: user.notificationPreferences || {
-        email: true,
-        orders: true,
-        marketing: false
-      }
-    });
-    
-  } catch (error) {
-    console.error('❌ Get notifications error:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch preferences' });
-  }
-});
-
-// Update Notification Preferences
-app.put('/api/user/notifications/update', authenticateToken, async (req, res) => {
-  try {
-    const { email, orders, marketing } = req.body;
-    
-    const user = await User.findById(req.user.userId);
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-
-    user.notificationPreferences = {
-      email: email !== undefined ? email : user.notificationPreferences.email,
-      orders: orders !== undefined ? orders : user.notificationPreferences.orders,
-      marketing: marketing !== undefined ? marketing : user.notificationPreferences.marketing
-    };
-
-    await user.save();
-
-    res.json({
-      success: true,
-      message: 'Notification preferences updated',
-      preferences: user.notificationPreferences
-    });
-    
-  } catch (error) {
-    console.error('❌ Update notifications error:', error);
-    res.status(500).json({ success: false, message: 'Update failed' });
-  }
-});
-
-// Get Payment Methods
-app.get('/api/user/payment-methods', authenticateToken, async (req, res) => {
-  try {
-    const paymentMethods = await PaymentMethod.find({ userId: req.user.userId }).sort({ createdAt: -1 });
-    
-    res.json({
-      success: true,
-      paymentMethods: paymentMethods.map(pm => ({
-        id: pm._id,
-        type: pm.type,
-        lastFour: pm.lastFour,
-        expiry: pm.expiry,
-        cardholderName: pm.cardholderName,
-        isDefault: pm.isDefault
-      }))
-    });
-    
-  } catch (error) {
-    console.error('❌ Get payment methods error:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch payment methods' });
-  }
-});
-
-// Add Payment Method
-app.post('/api/user/payment-methods/add', authenticateToken, async (req, res) => {
-  try {
-    const { type, lastFour, expiry, cardholderName, isDefault } = req.body;
-
-    if (!type || !lastFour || !expiry || !cardholderName) {
-      return res.status(400).json({ success: false, message: 'All fields are required' });
-    }
-
-    // If this is set as default, unset other defaults
-    if (isDefault) {
-      await PaymentMethod.updateMany(
-        { userId: req.user.userId },
-        { $set: { isDefault: false } }
-      );
-    }
-
-    const paymentMethod = new PaymentMethod({
-      userId: req.user.userId,
-      type,
-      lastFour,
-      expiry,
-      cardholderName,
-      isDefault: isDefault || false
-    });
-
-    await paymentMethod.save();
-
-    res.json({
-      success: true,
-      message: 'Payment method added',
-      paymentMethod: {
-        id: paymentMethod._id,
-        type: paymentMethod.type,
-        lastFour: paymentMethod.lastFour,
-        expiry: paymentMethod.expiry,
-        cardholderName: paymentMethod.cardholderName,
-        isDefault: paymentMethod.isDefault
-      }
-    });
-    
-  } catch (error) {
-    console.error('❌ Add payment method error:', error);
-    res.status(500).json({ success: false, message: 'Failed to add payment method' });
-  }
-});
-
-console.log('\n✅ Part 2 Loaded: Email Functions & Authentication Routes Ready');
-console.log('🔐 Auth Endpoints: Signup, Login, OTP, Password Reset, Admin, Agent');
-console.log('👤 Profile Endpoints: Get/Update Profile, Notifications, Payment Methods\n');
+console.log('✅ Part 2 loaded: Auth & User routes configured');
 
 // ========== END OF PART 2 ==========
 // Continue to Part 3 for Admin Dashboard & Analytics// ========== UYEH TECH SERVER v6.0 - PART 3 OF 6 ==========
@@ -1893,9 +898,6 @@ app.get('/api/admin/dashboard', authenticateAdmin, async (req, res) => {
     const publishedPosts = await BlogPost.countDocuments({ status: 'published' });
     const activeCoupons = await Coupon.countDocuments({ isActive: true });
     const totalDownloads = await Download.countDocuments();
-    const totalChats = await Chat.countDocuments(); // NEW v7.0
-    const openChats = await Chat.countDocuments({ status: { $in: ['open', 'assigned', 'in-progress'] } }); // NEW v7.0
-       
     
     // Revenue calculation
     const revenueData = await Order.aggregate([
@@ -1904,7 +906,7 @@ app.get('/api/admin/dashboard', authenticateAdmin, async (req, res) => {
     ]);
     const totalRevenue = revenueData[0]?.total || 0;
 
-    // Recent stats (last 7 days)
+    // Recent orders (last 7 days)
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const recentOrders = await Order.countDocuments({ createdAt: { $gte: sevenDaysAgo } });
     const recentRevenue = await Order.aggregate([
@@ -1912,18 +914,15 @@ app.get('/api/admin/dashboard', authenticateAdmin, async (req, res) => {
       { $group: { _id: null, total: { $sum: '$total' } } }
     ]);
     const recentDownloads = await Download.countDocuments({ downloadedAt: { $gte: sevenDaysAgo } });
+
+    // New users (last 7 days)
     const newUsers = await User.countDocuments({ createdAt: { $gte: sevenDaysAgo } });
-    const newChats = await Chat.countDocuments({ createdAt: { $gte: sevenDaysAgo } }); // NEW v7.0
 
     // Top selling products
     const topProducts = await Order.aggregate([
       { $match: { status: 'completed' } },
       { $unwind: '$items' },
-      { $group: { 
-        _id: '$items.title', 
-        count: { $sum: 1 }, 
-        revenue: { $sum: '$items.price' } 
-      }},
+      { $group: { _id: '$items.title', count: { $sum: 1 }, revenue: { $sum: '$items.price' } } },
       { $sort: { count: -1 } },
       { $limit: 5 }
     ]);
@@ -1933,12 +932,6 @@ app.get('/api/admin/dashboard', authenticateAdmin, async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(10)
       .populate('userId', 'fullName email');
-
-    // Active agents (NEW v7.0)
-    const activeAgents = await User.countDocuments({ 
-      isAgent: true, 
-      'agentInfo.status': { $in: ['online', 'busy'] } 
-    });
 
     res.json({
       success: true,
@@ -1951,17 +944,13 @@ app.get('/api/admin/dashboard', authenticateAdmin, async (req, res) => {
           activeCoupons,
           totalBlogPosts,
           publishedPosts,
-          totalDownloads,
-          totalChats, // NEW v7.0
-          openChats, // NEW v7.0
-          activeAgents // NEW v7.0
+          totalDownloads
         },
         recentStats: {
           newUsers,
           recentOrders,
           recentRevenue: recentRevenue[0]?.total || 0,
-          recentDownloads,
-          newChats // NEW v7.0
+          recentDownloads
         },
         topProducts,
         recentOrdersList
@@ -1969,7 +958,7 @@ app.get('/api/admin/dashboard', authenticateAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Dashboard error:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch dashboard data' });
+    res.status(500).json({ success: false, message: 'Failed to fetch dashboard' });
   }
 });
 
@@ -2020,17 +1009,6 @@ app.get('/api/admin/analytics', authenticateAdmin, async (req, res) => {
       { $sort: { _id: 1 } }
     ]);
 
-    // Chat trends (NEW v7.0)
-    const chatTrends = await Chat.aggregate([
-      { $match: { createdAt: { $gte: startDate } } },
-      { $group: {
-        _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
-        count: { $sum: 1 },
-        resolved: { $sum: { $cond: [{ $eq: ['$status', 'resolved'] }, 1, 0] } }
-      }},
-      { $sort: { _id: 1 } }
-    ]);
-
     // Download trends
     const downloadTrends = await Download.aggregate([
       { $match: { downloadedAt: { $gte: startDate } } },
@@ -2066,39 +1044,15 @@ app.get('/api/admin/analytics', authenticateAdmin, async (req, res) => {
       { $sort: { revenue: -1 } }
     ]);
 
-    // Agent performance (NEW v7.0)
-    const agentPerformance = await Chat.aggregate([
-      { $match: { assignedAgent: { $ne: null }, createdAt: { $gte: startDate } } },
-      { $lookup: {
-        from: 'users',
-        localField: 'assignedAgent',
-        foreignField: '_id',
-        as: 'agent'
-      }},
-      { $unwind: '$agent' },
-      { $group: {
-        _id: '$assignedAgent',
-        agentName: { $first: '$agent.fullName' },
-        totalChats: { $sum: 1 },
-        resolved: { $sum: { $cond: [{ $eq: ['$status', 'resolved'] }, 1, 0] } },
-        avgResponseTime: { $avg: '$firstResponseTime' }
-      }},
-      { $sort: { totalChats: -1 } },
-      { $limit: 10 }
-    ]);
-
     res.json({
       success: true,
       analytics: {
         period,
-        startDate,
         dailyStats,
         userGrowth,
         downloadTrends,
-        chatTrends, // NEW v7.0
         productPerformance,
-        categoryStats,
-        agentPerformance // NEW v7.0
+        categoryStats
       }
     });
   } catch (error) {
@@ -2107,17 +1061,13 @@ app.get('/api/admin/analytics', authenticateAdmin, async (req, res) => {
   }
 });
 
-
 // ========== USER MANAGEMENT ==========
-
-// Get All Users (with pagination and search)
 app.get('/api/admin/users', authenticateAdmin, async (req, res) => {
   try {
-    const { page = 1, limit = 20, search = '', status = 'all', role = 'all' } = req.query;
+    const { page = 1, limit = 20, search = '', status = 'all' } = req.query;
     
     let query = {};
     
-    // Search by name or email
     if (search) {
       query.$or = [
         { fullName: { $regex: search, $options: 'i' } },
@@ -2125,21 +1075,12 @@ app.get('/api/admin/users', authenticateAdmin, async (req, res) => {
       ];
     }
     
-    // Filter by status
     if (status === 'banned') {
       query.isBanned = true;
+    } else if (status === 'admin') {
+      query.isAdmin = true;
     } else if (status === 'active') {
       query.isBanned = false;
-    }
-
-    // Filter by role (NEW v7.0)
-    if (role === 'admin') {
-      query.isAdmin = true;
-    } else if (role === 'agent') {
-      query.isAgent = true;
-    } else if (role === 'user') {
-      query.isAdmin = false;
-      query.isAgent = false;
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -2152,12 +1093,11 @@ app.get('/api/admin/users', authenticateAdmin, async (req, res) => {
 
     const total = await User.countDocuments(query);
 
-    // Add statistics for each user
+    // Add order count and download count for each user
     const usersWithStats = await Promise.all(
       users.map(async (user) => {
         const orderCount = await Order.countDocuments({ userId: user._id });
         const downloadCount = await Download.countDocuments({ userId: user._id });
-        const chatCount = await Chat.countDocuments({ customerId: user.email }); // NEW v7.0
         const totalSpent = await Order.aggregate([
           { $match: { userId: user._id, status: 'completed' } },
           { $group: { _id: null, total: { $sum: '$total' } } }
@@ -2166,7 +1106,6 @@ app.get('/api/admin/users', authenticateAdmin, async (req, res) => {
           ...user.toObject(),
           orderCount,
           downloadCount,
-          chatCount, // NEW v7.0
           totalSpent: totalSpent[0]?.total || 0
         };
       })
@@ -2188,30 +1127,16 @@ app.get('/api/admin/users', authenticateAdmin, async (req, res) => {
   }
 });
 
-// Get Single User Details
 app.get('/api/admin/users/:userId', authenticateAdmin, async (req, res) => {
   try {
     const user = await User.findById(req.params.userId).select('-password -twoFactorSecret');
-    
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    // Get user's orders
-    const orders = await Order.find({ userId: user._id })
-      .sort({ createdAt: -1 })
-      .limit(10);
-    
+    const orders = await Order.find({ userId: user._id }).sort({ createdAt: -1 }).limit(10);
     const orderCount = await Order.countDocuments({ userId: user._id });
     const downloadCount = await Download.countDocuments({ userId: user._id });
-    
-    // Get user's chats (NEW v7.0)
-    const chats = await Chat.find({ customerId: user.email })
-      .sort({ createdAt: -1 })
-      .limit(10);
-    const chatCount = await Chat.countDocuments({ customerId: user.email });
-
-    // Calculate total spent
     const totalSpent = await Order.aggregate([
       { $match: { userId: user._id, status: 'completed' } },
       { $group: { _id: null, total: { $sum: '$total' } } }
@@ -2223,19 +1148,16 @@ app.get('/api/admin/users/:userId', authenticateAdmin, async (req, res) => {
         ...user.toObject(),
         orderCount,
         downloadCount,
-        chatCount, // NEW v7.0
         totalSpent: totalSpent[0]?.total || 0,
-        recentOrders: orders,
-        recentChats: chats // NEW v7.0
+        recentOrders: orders
       }
     });
   } catch (error) {
     console.error('❌ Get user error:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch user details' });
+    res.status(500).json({ success: false, message: 'Failed to fetch user' });
   }
 });
 
-// Ban/Unban User
 app.put('/api/admin/users/:userId/ban', authenticateAdmin, async (req, res) => {
   try {
     const { isBanned, banReason } = req.body;
@@ -2245,160 +1167,51 @@ app.put('/api/admin/users/:userId/ban', authenticateAdmin, async (req, res) => {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    // Cannot ban admin users
     if (user.isAdmin) {
-      return res.status(400).json({ success: false, message: 'Cannot ban administrator accounts' });
+      return res.status(400).json({ success: false, message: 'Cannot ban admin' });
     }
 
     user.isBanned = isBanned;
-    user.banReason = isBanned ? (banReason || 'Violated terms of service') : '';
+    user.banReason = banReason || '';
     await user.save();
-
-    console.log(`${isBanned ? '🚫 User banned' : '✅ User unbanned'}: ${user.email}`);
 
     res.json({
       success: true,
-      message: isBanned ? 'User has been banned' : 'User has been unbanned',
+      message: isBanned ? 'User banned' : 'User unbanned',
       user: {
         id: user._id,
         name: user.fullName,
-        email: user.email,
-        isBanned: user.isBanned,
-        banReason: user.banReason
+        isBanned: user.isBanned
       }
     });
   } catch (error) {
     console.error('❌ Ban user error:', error);
-    res.status(500).json({ success: false, message: 'Failed to update user status' });
+    res.status(500).json({ success: false, message: 'Failed to update user' });
   }
 });
 
-// Delete User
 app.delete('/api/admin/users/:userId', authenticateAdmin, async (req, res) => {
   try {
     const userId = req.params.userId;
 
-    // Cannot delete own account
     if (userId === req.user.userId) {
-      return res.status(400).json({ success: false, message: 'Cannot delete your own account' });
+      return res.status(400).json({ success: false, message: 'Cannot delete own account' });
     }
 
     const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
+    if (user && user.isAdmin) {
+      return res.status(400).json({ success: false, message: 'Cannot delete admin account' });
     }
 
-    // Cannot delete admin users
-    if (user.isAdmin) {
-      return res.status(400).json({ success: false, message: 'Cannot delete administrator accounts' });
-    }
-
-    // Delete user's data
-    await Order.deleteMany({ userId: user._id });
-    await Download.deleteMany({ userId: user._id });
-    await PaymentMethod.deleteMany({ userId: user._id });
-    await Chat.updateMany(
-      { customerId: user.email },
-      { $set: { customerName: 'Deleted User', customerEmail: 'deleted@example.com' } }
-    );
-    
-    // Delete the user
+    await Order.deleteMany({ userId });
+    await PaymentMethod.deleteMany({ userId });
+    await Download.deleteMany({ userId });
     await User.findByIdAndDelete(userId);
 
-    console.log(`🗑️  User deleted: ${user.email}`);
-
-    res.json({
-      success: true,
-      message: 'User and associated data have been deleted'
-    });
+    res.json({ success: true, message: 'User deleted successfully' });
   } catch (error) {
     console.error('❌ Delete user error:', error);
-    res.status(500).json({ success: false, message: 'Failed to delete user' });
-  }
-});
-
-// Promote User to Agent (NEW v7.0)
-app.put('/api/admin/users/:userId/promote-agent', authenticateAdmin, async (req, res) => {
-  try {
-    const { department = 'General', maxChats = 5 } = req.body;
-    
-    const user = await User.findById(req.params.userId);
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-
-    if (user.isAgent) {
-      return res.status(400).json({ success: false, message: 'User is already an agent' });
-    }
-
-    user.isAgent = true;
-    user.agentInfo = {
-      department,
-      status: 'offline',
-      activeChats: 0,
-      maxChats,
-      rating: 0,
-      totalChats: 0,
-      resolvedChats: 0
-    };
-    await user.save();
-
-    console.log(`👨‍💼 User promoted to agent: ${user.email}`);
-
-    res.json({
-      success: true,
-      message: 'User has been promoted to agent',
-      user: {
-        id: user._id,
-        name: user.fullName,
-        email: user.email,
-        isAgent: user.isAgent,
-        agentInfo: user.agentInfo
-      }
-    });
-  } catch (error) {
-    console.error('❌ Promote agent error:', error);
-    res.status(500).json({ success: false, message: 'Failed to promote user' });
-  }
-});
-
-// Demote Agent to User (NEW v7.0)
-app.put('/api/admin/users/:userId/demote-agent', authenticateAdmin, async (req, res) => {
-  try {
-    const user = await User.findById(req.params.userId);
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-
-    if (!user.isAgent) {
-      return res.status(400).json({ success: false, message: 'User is not an agent' });
-    }
-
-    // Unassign all chats
-    await Chat.updateMany(
-      { assignedAgent: user._id, status: { $ne: 'closed' } },
-      { $set: { assignedAgent: null, status: 'open' } }
-    );
-
-    user.isAgent = false;
-    user.agentInfo = undefined;
-    await user.save();
-
-    console.log(`👤 Agent demoted to user: ${user.email}`);
-
-    res.json({
-      success: true,
-      message: 'Agent has been demoted to regular user',
-      user: {
-        id: user._id,
-        name: user.fullName,
-        email: user.email,
-        isAgent: user.isAgent
-      }
-    });
-  } catch (error) {
-    console.error('❌ Demote agent error:', error);
-    res.status(500).json({ success: false, message: 'Failed to demote agent' });
+    res.status(500).json({ success: false, message: 'Delete failed' });
   }
 });
 
@@ -3596,772 +2409,6 @@ app.get('/api/blog/featured', async (req, res) => {
   }
 });
 
-
-// ═════════════════════════════════════════════════════════════════════════════
-// CUSTOMER CHAT ENDPOINTS
-// ═════════════════════════════════════════════════════════════════════════════
-
-// Start New Chat (Customer)
-app.post('/api/chat/start', async (req, res) => {
-  try {
-    const { customerName, customerEmail, subject, department, priority } = req.body;
-
-    if (!customerName || !customerEmail || !subject) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Customer name, email, and subject are required' 
-      });
-    }
-
-    // Validate email format
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(customerEmail)) {
-      return res.status(400).json({ success: false, message: 'Invalid email format' });
-    }
-
-    const chatId = generateChatId();
-    const customerId = customerEmail.toLowerCase();
-
-    const chat = new Chat({
-      chatId,
-      customerId,
-      customerName: customerName.trim(),
-      customerEmail: customerEmail.toLowerCase(),
-      subject: subject.trim(),
-      department: department || 'General',
-      priority: priority || 'medium',
-      status: 'open',
-      messages: [{
-        messageId: generateMessageId(),
-        sender: 'system',
-        senderId: 'system',
-        senderName: 'UYEH TECH Support',
-        message: `Chat session started. Subject: ${subject}`,
-        timestamp: new Date()
-      }]
-    });
-
-    await chat.save();
-
-    console.log(`💬 Chat started: ${chatId} by ${customerName}`);
-
-    // Auto-assign to available agent if enabled
-    const settings = await SystemSettings.findOne();
-    if (settings?.chatSettings?.autoAssignChats) {
-      // Find available agent
-      const availableAgent = await User.findOne({
-        isAgent: true,
-        'agentInfo.status': { $in: ['online', 'away'] },
-        'agentInfo.activeChats': { $lt: 5 }
-      }).sort({ 'agentInfo.activeChats': 1 });
-
-      if (availableAgent) {
-        chat.assignedAgent = availableAgent._id;
-        chat.status = 'assigned';
-        
-        // Add assignment message
-        chat.messages.push({
-          messageId: generateMessageId(),
-          sender: 'system',
-          senderId: 'system',
-          senderName: 'System',
-          message: `Chat assigned to agent: ${availableAgent.fullName}`,
-          timestamp: new Date()
-        });
-
-        // Update agent stats
-        availableAgent.agentInfo.activeChats += 1;
-        availableAgent.agentInfo.totalChats += 1;
-        await availableAgent.save();
-        await chat.save();
-
-        // Notify agent via WebSocket
-        sendToAgent(availableAgent._id.toString(), {
-          type: 'chat_assigned',
-          chat: {
-            chatId: chat.chatId,
-            customerName: chat.customerName,
-            subject: chat.subject,
-            department: chat.department,
-            priority: chat.priority
-          }
-        });
-
-        // Send email notification to agent
-        await sendAgentAssignmentEmail(availableAgent.email, {
-          chatId: chat.chatId,
-          customerName: chat.customerName,
-          subject: chat.subject,
-          department: chat.department,
-          priority: chat.priority
-        });
-      }
-    }
-
-    res.status(201).json({
-      success: true,
-      message: 'Chat session started successfully',
-      chat: {
-        chatId: chat.chatId,
-        customerId: chat.customerId,
-        customerName: chat.customerName,
-        subject: chat.subject,
-        department: chat.department,
-        priority: chat.priority,
-        status: chat.status,
-        assignedAgent: chat.assignedAgent,
-        createdAt: chat.createdAt
-      }
-    });
-  } catch (error) {
-    console.error('❌ Start chat error:', error);
-    res.status(500).json({ success: false, message: 'Failed to start chat session' });
-  }
-});
-
-// Get Chat Details
-app.get('/api/chat/:chatId', async (req, res) => {
-  try {
-    const { chatId } = req.params;
-
-    const chat = await Chat.findOne({ chatId })
-      .populate('assignedAgent', 'fullName email agentInfo');
-
-    if (!chat) {
-      return res.status(404).json({ success: false, message: 'Chat session not found' });
-    }
-
-    res.json({
-      success: true,
-      chat: {
-        chatId: chat.chatId,
-        customerId: chat.customerId,
-        customerName: chat.customerName,
-        customerEmail: chat.customerEmail,
-        subject: chat.subject,
-        department: chat.department,
-        priority: chat.priority,
-        status: chat.status,
-        assignedAgent: chat.assignedAgent,
-        messages: chat.messages,
-        tags: chat.tags,
-        rating: chat.rating,
-        feedback: chat.feedback,
-        createdAt: chat.createdAt,
-        updatedAt: chat.updatedAt,
-        totalMessages: chat.totalMessages
-      }
-    });
-  } catch (error) {
-    console.error('❌ Get chat error:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch chat details' });
-  }
-});
-
-// Send Message in Chat
-app.post('/api/chat/:chatId/send', async (req, res) => {
-  try {
-    const { chatId } = req.params;
-    const { sender, senderId, senderName, message, attachments } = req.body;
-
-    if (!sender || !message) {
-      return res.status(400).json({ success: false, message: 'Sender and message are required' });
-    }
-
-    if (!['customer', 'agent', 'system'].includes(sender)) {
-      return res.status(400).json({ success: false, message: 'Invalid sender type' });
-    }
-
-    const chat = await Chat.findOne({ chatId });
-    if (!chat) {
-      return res.status(404).json({ success: false, message: 'Chat session not found' });
-    }
-
-    if (chat.status === 'closed') {
-      return res.status(400).json({ success: false, message: 'Chat session is closed' });
-    }
-
-    const newMessage = {
-      messageId: generateMessageId(),
-      sender,
-      senderId: senderId || chat.customerId,
-      senderName: senderName || chat.customerName,
-      message: message.trim(),
-      attachments: attachments || [],
-      timestamp: new Date(),
-      read: false
-    };
-
-    chat.messages.push(newMessage);
-
-    // Calculate first response time if this is agent's first message
-    if (sender === 'agent' && !chat.firstResponseTime) {
-      const firstMessage = chat.messages.find(m => m.sender === 'customer');
-      if (firstMessage) {
-        const responseTime = (newMessage.timestamp - firstMessage.timestamp) / 1000 / 60; // minutes
-        chat.firstResponseTime = Math.round(responseTime);
-      }
-    }
-
-    // Update status to in-progress if not already
-    if (chat.status === 'open' || chat.status === 'assigned') {
-      chat.status = 'in-progress';
-    }
-
-    await chat.save();
-
-    // Broadcast via WebSocket
-    broadcastToChat(chatId, {
-      type: 'new_message',
-      message: newMessage,
-      chatId: chatId
-    });
-
-    console.log(`💬 Message sent in chat ${chatId} by ${sender}`);
-
-    res.json({
-      success: true,
-      message: 'Message sent successfully',
-      messageData: newMessage
-    });
-  } catch (error) {
-    console.error('❌ Send message error:', error);
-    res.status(500).json({ success: false, message: 'Failed to send message' });
-  }
-});
-
-// Upload File in Chat
-app.post('/api/chat/upload', upload.array('files', 5), async (req, res) => {
-  try {
-    if (!req.files || req.files.length === 0) {
-      return res.status(400).json({ success: false, message: 'No files uploaded' });
-    }
-
-    const uploadedFiles = req.files.map(file => ({
-      filename: file.originalname,
-      url: `${BASE_URL}/uploads/${file.filename}`,
-      fileType: file.mimetype,
-      fileSize: file.size
-    }));
-
-    console.log(`📎 ${uploadedFiles.length} file(s) uploaded for chat`);
-
-    res.json({
-      success: true,
-      message: 'Files uploaded successfully',
-      files: uploadedFiles
-    });
-  } catch (error) {
-    console.error('❌ Upload error:', error);
-    res.status(500).json({ success: false, message: 'File upload failed' });
-  }
-});
-
-// Mark Messages as Read
-app.post('/api/chat/:chatId/read', async (req, res) => {
-  try {
-    const { chatId } = req.params;
-    const { messageIds } = req.body;
-
-    if (!messageIds || !Array.isArray(messageIds)) {
-      return res.status(400).json({ success: false, message: 'Message IDs array required' });
-    }
-
-    const chat = await Chat.findOne({ chatId });
-    if (!chat) {
-      return res.status(404).json({ success: false, message: 'Chat session not found' });
-    }
-
-    let markedCount = 0;
-    chat.messages.forEach(msg => {
-      if (messageIds.includes(msg.messageId) && !msg.read) {
-        msg.read = true;
-        markedCount++;
-      }
-    });
-
-    await chat.save();
-
-    // Broadcast via WebSocket
-    broadcastToChat(chatId, {
-      type: 'messages_read',
-      messageIds: messageIds,
-      chatId: chatId
-    });
-
-    res.json({ 
-      success: true, 
-      message: `${markedCount} message(s) marked as read` 
-    });
-  } catch (error) {
-    console.error('❌ Mark read error:', error);
-    res.status(500).json({ success: false, message: 'Failed to mark messages as read' });
-  }
-});
-
-// End Chat Session
-app.post('/api/chat/:chatId/end', async (req, res) => {
-  try {
-    const { chatId } = req.params;
-    const { rating, feedback } = req.body;
-
-    const chat = await Chat.findOne({ chatId });
-    if (!chat) {
-      return res.status(404).json({ success: false, message: 'Chat session not found' });
-    }
-
-    if (chat.status === 'closed') {
-      return res.status(400).json({ success: false, message: 'Chat session already closed' });
-    }
-
-    // Add closing message
-    chat.messages.push({
-      messageId: generateMessageId(),
-      sender: 'system',
-      senderId: 'system',
-      senderName: 'System',
-      message: 'Chat session ended.',
-      timestamp: new Date()
-    });
-
-    chat.status = 'closed';
-    chat.closedAt = new Date();
-    
-    if (rating && rating >= 1 && rating <= 5) {
-      chat.rating = rating;
-    }
-    if (feedback) {
-      chat.feedback = feedback.trim();
-    }
-
-    // Update agent stats if assigned
-    if (chat.assignedAgent) {
-      const agent = await User.findById(chat.assignedAgent);
-      if (agent && agent.agentInfo) {
-        agent.agentInfo.activeChats = Math.max(0, agent.agentInfo.activeChats - 1);
-        if (chat.status === 'resolved') {
-          agent.agentInfo.resolvedChats += 1;
-        }
-        // Update agent rating
-        if (rating) {
-          const totalRatings = agent.agentInfo.totalChats;
-          const currentRating = agent.agentInfo.rating || 0;
-          agent.agentInfo.rating = ((currentRating * (totalRatings - 1)) + rating) / totalRatings;
-        }
-        await agent.save();
-      }
-    }
-
-    await chat.save();
-
-    // Broadcast via WebSocket
-    broadcastToChat(chatId, {
-      type: 'chat_closed',
-      chatId: chatId,
-      rating: rating,
-      feedback: feedback
-    });
-
-    console.log(`✅ Chat ended: ${chatId}`);
-
-    res.json({
-      success: true,
-      message: 'Chat session ended successfully',
-      rating: rating,
-      feedback: feedback
-    });
-  } catch (error) {
-    console.error('❌ End chat error:', error);
-    res.status(500).json({ success: false, message: 'Failed to end chat session' });
-  }
-});
-
-// Resolve Chat (Mark as resolved before closing)
-app.post('/api/chat/:chatId/resolve', async (req, res) => {
-  try {
-    const { chatId } = req.params;
-
-    const chat = await Chat.findOne({ chatId });
-    if (!chat) {
-      return res.status(404).json({ success: false, message: 'Chat session not found' });
-    }
-
-    if (chat.status === 'closed') {
-      return res.status(400).json({ success: false, message: 'Chat session already closed' });
-    }
-
-    chat.status = 'resolved';
-    chat.resolvedAt = new Date();
-    
-    chat.messages.push({
-      messageId: generateMessageId(),
-      sender: 'system',
-      senderId: 'system',
-      senderName: 'System',
-      message: 'Issue resolved.',
-      timestamp: new Date()
-    });
-
-    await chat.save();
-
-    // Broadcast via WebSocket
-    broadcastToChat(chatId, {
-      type: 'chat_resolved',
-      chatId: chatId
-    });
-
-    console.log(`✅ Chat resolved: ${chatId}`);
-
-    res.json({
-      success: true,
-      message: 'Chat marked as resolved'
-    });
-  } catch (error) {
-    console.error('❌ Resolve chat error:', error);
-    res.status(500).json({ success: false, message: 'Failed to resolve chat' });
-  }
-});
-
-// ═════════════════════════════════════════════════════════════════════════════
-// AGENT DASHBOARD ENDPOINTS
-// ═════════════════════════════════════════════════════════════════════════════
-
-// Get All Chats (Agent/Admin)
-app.get('/api/agent/chats', authenticateAgent, async (req, res) => {
-  try {
-    const { status, department, priority, page = 1, limit = 20 } = req.query;
-    
-    console.log('🔍 Agent chats request from:', req.agentUser.email);
-    console.log('   Query params:', req.query);
-    
-    let query = {};
-    
-    // FIXED: Show ALL chats by default - agents can filter to "My Chats" using frontend
-    // This allows agents to see and pick up unassigned chats from the queue
-    
-    if (status && status !== 'all') {
-      query.status = status;
-    }
-    
-    if (department && department !== 'all') {
-      query.department = department;
-    }
-
-    if (priority && priority !== 'all') {
-      query.priority = priority;
-    }
-
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-
-    const chats = await Chat.find(query)
-      .populate('assignedAgent', 'fullName email agentInfo')
-      .sort({ updatedAt: -1 })
-      .limit(parseInt(limit))
-      .skip(skip);
-
-    const total = await Chat.countDocuments(query);
-
-    console.log('✅ Returning', chats.length, 'chats to agent');
-
-    res.json({
-      success: true,
-      chats: chats.map(chat => ({
-        chatId: chat.chatId,
-        customerName: chat.customerName,
-        customerEmail: chat.customerEmail,
-        subject: chat.subject,
-        department: chat.department,
-        priority: chat.priority,
-        status: chat.status,
-        assignedAgent: chat.assignedAgent,
-        totalMessages: chat.totalMessages,
-        unreadCount: chat.messages.filter(m => !m.read && m.sender === 'customer').length,
-        createdAt: chat.createdAt,
-        updatedAt: chat.updatedAt
-      })),
-      pagination: {
-        total,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        pages: Math.ceil(total / parseInt(limit))
-      }
-    });
-  } catch (error) {
-    console.error('❌ Get chats error:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch chats' });
-  }
-});
-
-// Assign Chat to Agent (Agents can self-assign, Admins can assign to anyone)
-app.post('/api/agent/chats/:chatId/assign', authenticateAgent, async (req, res) => {
-  try {
-    const { chatId } = req.params;
-    const { agentId } = req.body;
-
-    console.log('🔄 Chat assignment request:');
-    console.log('   Chat ID:', chatId);
-    console.log('   Target Agent ID:', agentId);
-    console.log('   Requesting Agent:', req.agentUser.email);
-    console.log('   Is Admin:', req.agentUser.isAdmin);
-
-    if (!agentId) {
-      return res.status(400).json({ success: false, message: 'Agent ID required' });
-    }
-
-    // FIXED: Permission check - agents can only assign to themselves, admins can assign to anyone
-    const requestingAgentId = req.agentUser._id.toString();
-    const targetAgentId = agentId;
-
-    if (!req.agentUser.isAdmin && requestingAgentId !== targetAgentId) {
-      console.log('❌ Permission denied: Agent trying to assign to someone else');
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Agents can only assign chats to themselves' 
-      });
-    }
-
-    const chat = await Chat.findOne({ chatId });
-    if (!chat) {
-      console.log('❌ Chat not found:', chatId);
-      return res.status(404).json({ success: false, message: 'Chat session not found' });
-    }
-
-    const agent = await User.findById(agentId);
-    if (!agent || (!agent.isAgent && !agent.isAdmin)) {
-      console.log('❌ Invalid agent ID:', agentId);
-      return res.status(400).json({ success: false, message: 'Invalid agent ID' });
-    }
-
-    // Update previous agent stats if chat was already assigned
-    if (chat.assignedAgent) {
-      const previousAgent = await User.findById(chat.assignedAgent);
-      if (previousAgent && previousAgent.agentInfo) {
-        previousAgent.agentInfo.activeChats = Math.max(0, previousAgent.agentInfo.activeChats - 1);
-        await previousAgent.save();
-      }
-    }
-
-    chat.assignedAgent = agentId;
-    chat.status = 'assigned';
-    
-    // Add system message
-    chat.messages.push({
-      messageId: generateMessageId(),
-      sender: 'system',
-      senderId: 'system',
-      senderName: 'System',
-      message: `Chat assigned to agent: ${agent.fullName}`,
-      timestamp: new Date()
-    });
-
-    await chat.save();
-
-    console.log('✅ Chat assigned successfully:', chatId, '→', agent.fullName);
-
-    // Update new agent stats
-    if (agent.agentInfo) {
-      agent.agentInfo.activeChats += 1;
-      agent.agentInfo.totalChats += 1;
-      await agent.save();
-    }
-
-    // Notify agent via WebSocket
-    sendToAgent(agentId.toString(), {
-      type: 'chat_assigned',
-      chat: {
-        chatId: chat.chatId,
-        customerName: chat.customerName,
-        subject: chat.subject,
-        department: chat.department,
-        priority: chat.priority
-      }
-    });
-
-    // Send email notification
-    await sendAgentAssignmentEmail(agent.email, {
-      chatId: chat.chatId,
-      customerName: chat.customerName,
-      subject: chat.subject,
-      department: chat.department,
-      priority: chat.priority
-    });
-
-    console.log(`👨‍💼 Chat ${chatId} assigned to agent ${agent.fullName}`);
-
-    res.json({
-      success: true,
-      message: 'Chat assigned successfully',
-      chat: {
-        chatId: chat.chatId,
-        assignedAgent: agent.fullName,
-        status: chat.status
-      }
-    });
-  } catch (error) {
-    console.error('❌ Assign chat error:', error);
-    res.status(500).json({ success: false, message: 'Failed to assign chat' });
-  }
-});
-
-// Update Agent Status
-app.put('/api/agent/status', authenticateAgent, async (req, res) => {
-  try {
-    const { status } = req.body;
-
-    if (!['online', 'offline', 'busy', 'away'].includes(status)) {
-      return res.status(400).json({ success: false, message: 'Invalid status' });
-    }
-
-    const agent = await User.findById(req.agentUser._id);
-    if (!agent.agentInfo) {
-      return res.status(400).json({ success: false, message: 'User is not an agent' });
-    }
-
-    agent.agentInfo.status = status;
-    agent.lastActivity = new Date();
-    await agent.save();
-
-    console.log(`👨‍💼 Agent ${agent.fullName} status: ${status}`);
-
-    res.json({
-      success: true,
-      message: 'Status updated successfully',
-      status: status
-    });
-  } catch (error) {
-    console.error('❌ Update status error:', error);
-    res.status(500).json({ success: false, message: 'Failed to update status' });
-  }
-});
-
-// Get Agent Statistics
-app.get('/api/agent/stats', authenticateAgent, async (req, res) => {
-  try {
-    const agentId = req.agentUser._id;
-
-    const totalChats = await Chat.countDocuments({ assignedAgent: agentId });
-    const openChats = await Chat.countDocuments({ 
-      assignedAgent: agentId, 
-      status: { $in: ['open', 'assigned'] } 
-    });
-    const inProgressChats = await Chat.countDocuments({ 
-      assignedAgent: agentId, 
-      status: 'in-progress' 
-    });
-    const resolvedChats = await Chat.countDocuments({ 
-      assignedAgent: agentId, 
-      status: 'resolved' 
-    });
-    const closedChats = await Chat.countDocuments({ 
-      assignedAgent: agentId, 
-      status: 'closed' 
-    });
-
-    // Calculate average response time
-    const chatsWithResponseTime = await Chat.find({ 
-      assignedAgent: agentId,
-      firstResponseTime: { $exists: true }
-    }).select('firstResponseTime');
-
-    let avgResponseTime = 0;
-    if (chatsWithResponseTime.length > 0) {
-      const total = chatsWithResponseTime.reduce((sum, chat) => sum + chat.firstResponseTime, 0);
-      avgResponseTime = Math.round(total / chatsWithResponseTime.length);
-    }
-
-    // Get agent rating
-    const agent = await User.findById(agentId);
-    const rating = agent.agentInfo?.rating || 0;
-
-    res.json({
-      success: true,
-      stats: {
-        totalChats,
-        openChats,
-        inProgressChats,
-        resolvedChats,
-        closedChats,
-        activeChats: openChats + inProgressChats,
-        avgResponseTime: avgResponseTime, // in minutes
-        rating: rating.toFixed(1)
-      }
-    });
-  } catch (error) {
-    console.error('❌ Get stats error:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch statistics' });
-  }
-});
-
-// Get All Agents (Admin)
-app.get('/api/admin/agents', authenticateAdmin, async (req, res) => {
-  try {
-    const agents = await User.find({ isAgent: true })
-      .select('fullName email agentInfo lastActivity')
-      .sort({ 'agentInfo.totalChats': -1 });
-
-    res.json({
-      success: true,
-      agents: agents.map(agent => ({
-        id: agent._id,
-        name: agent.fullName,
-        email: agent.email,
-        department: agent.agentInfo.department,
-        status: agent.agentInfo.status,
-        activeChats: agent.agentInfo.activeChats,
-        maxChats: agent.agentInfo.maxChats,
-        totalChats: agent.agentInfo.totalChats,
-        resolvedChats: agent.agentInfo.resolvedChats,
-        rating: agent.agentInfo.rating,
-        lastActivity: agent.lastActivity
-      })),
-      count: agents.length
-    });
-  } catch (error) {
-    console.error('❌ Get agents error:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch agents' });
-  }
-});
-
-// Update Agent Settings (Admin)
-app.put('/api/admin/agents/:agentId', authenticateAdmin, async (req, res) => {
-  try {
-    const { department, maxChats, status } = req.body;
-
-    const agent = await User.findById(req.params.agentId);
-    if (!agent || !agent.isAgent) {
-      return res.status(404).json({ success: false, message: 'Agent not found' });
-    }
-
-    if (department) agent.agentInfo.department = department;
-    if (maxChats !== undefined) agent.agentInfo.maxChats = maxChats;
-    if (status) agent.agentInfo.status = status;
-
-    await agent.save();
-
-    console.log(`⚙️  Agent ${agent.fullName} settings updated`);
-
-    res.json({
-      success: true,
-      message: 'Agent settings updated successfully',
-      agent: {
-        id: agent._id,
-        name: agent.fullName,
-        department: agent.agentInfo.department,
-        maxChats: agent.agentInfo.maxChats,
-        status: agent.agentInfo.status
-      }
-    });
-  } catch (error) {
-    console.error('❌ Update agent error:', error);
-    res.status(500).json({ success: false, message: 'Failed to update agent settings' });
-  }
-});
-
-console.log('\n Loaded: Chat System & Support Tickets Ready');
-console.log('💬 Endpoints: Customer Chat, Agent Dashboard, File Upload, Real-time Updates\n');
-
-
-
 // ========== SYSTEM SETTINGS ==========
 app.get('/api/admin/settings', authenticateAdmin, async (req, res) => {
   try {
@@ -4592,376 +2639,1498 @@ console.log('✅ Part 5 loaded: Blog Management & System Settings configured');
 // Server Startup, Error Handling & Complete Documentation
 // COPY THIS AFTER PART 5
 
-server.listen(PORT, () => {
-  console.log('\n╔═══════════════════════════════════════════════════════════════════════════╗');
-  console.log('║         🚀 UYEH TECH SERVER v7.0 - FULLY OPERATIONAL                    ║');
-  console.log('╚═══════════════════════════════════════════════════════════════════════════╝\n');
+// ========== START SERVER ==========
+app.listen(PORT, () => {
+  console.log('\n╔═══════════════════════════════════════════════════════════════╗');
+  console.log('║   🚀 UYEH TECH SERVER v6.0 - READY WITH DOWNLOAD LINKS     ║');
+  console.log('╚═══════════════════════════════════════════════════════════════╝\n');
+  console.log(`📡 Server URL: http://localhost:${PORT}`);
+  console.log(`📧 Admin Email: ${ADMIN_EMAIL}`);
+  console.log(`🔐 Admin Portal: Admind.html`);
+  console.log(`📊 Dashboard: admin-dashboard.html\n`);
   
-  console.log(`📡 Server Information:`);
-  console.log(`   └─ HTTP Server: http://localhost:${PORT}`);
-  console.log(`   └─ WebSocket Server: ws://localhost:${PORT}/ws`);
-  console.log(`   └─ Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`   └─ Base URL: ${BASE_URL}\n`);
+  console.log('╔═══════════════════════════════════════════════════════════════╗');
+  console.log('║              🎉 COMPLETE FEATURE LIST                       ║');
+  console.log('╚═══════════════════════════════════════════════════════════════╝');
+  console.log('  📊 Dashboard Overview with Real-time Stats');
+  console.log('  📈 Analytics System (Revenue, Orders, Downloads)');
+  console.log('  👥 User Management (View, Ban, Delete)');
+  console.log('  📦 Order Management (Track, Update, Refund)');
+  console.log('  🎫 Coupon System (Create, Edit, Validate)');
+  console.log('  📝 Blog Management (Posts, Comments, SEO)');
+  console.log('  🛍️  Product Management (CRUD + Images)');
+  console.log('  📥 Download Link Management (NEW!)');
+  console.log('  📊 Download Tracking & Statistics (NEW!)');
+  console.log('  ⚙️  System Settings (Configuration)\n');
   
-  console.log(`👤 Admin Configuration:`);
-  console.log(`   └─ Admin Email: ${ADMIN_EMAIL}`);
-  console.log(`   └─ Admin Dashboard: admin-dashboard.html`);
-  console.log(`   └─ Agent Dashboard: agent-dashboard.html\n`);
-  
-  console.log('╔═══════════════════════════════════════════════════════════════════════════╗');
-  console.log('║                      ✨ NEW IN v7.0                                      ║');
-  console.log('╚═══════════════════════════════════════════════════════════════════════════╝');
-  console.log('  💬 Real-time Customer Chat with WebSocket');
-  console.log('  👨‍💼 Agent Dashboard & Management System');
-  console.log('  🎫 Support Ticket System');
-  console.log('  📎 File Upload in Chat (Images, PDFs, Documents)');
-  console.log('  🔄 Live Status Updates & Notifications');
-  console.log('  📊 Agent Performance Analytics\n');
-  
-  console.log('╔═══════════════════════════════════════════════════════════════════════════╗');
-  console.log('║                   📋 COMPLETE FEATURE LIST                               ║');
-  console.log('╚═══════════════════════════════════════════════════════════════════════════╝');
-  console.log('  ✅ User Authentication (Signup, Login, Password Reset)');
-  console.log('  ✅ Email Verification with OTP (Termii Integration)');
-  console.log('  ✅ Admin Dashboard with Real-time Statistics');
-  console.log('  ✅ Analytics System (Revenue, Orders, Users, Downloads, Chats)');
-  console.log('  ✅ User Management (View, Ban, Delete, Promote to Agent)');
-  console.log('  ✅ Order Management (Track, Update Status, Refund)');
-  console.log('  ✅ Product Management (CRUD with Download Links)');
-  console.log('  ✅ Download Tracking & Statistics');
-  console.log('  ✅ Coupon System (Create, Validate, Usage Limits)');
-  console.log('  ✅ Blog System (Posts, Comments, Categories, Search)');
-  console.log('  ✅ Payment Integration (Flutterwave)');
-  console.log('  ✅ System Settings Management');
-  console.log('  ✅ Real-time Chat System (NEW v7.0)');
-  console.log('  ✅ Agent Dashboard (NEW v7.0)');
-  console.log('  ✅ Support Tickets (NEW v7.0)');
-  console.log('  ✅ File Upload Support (NEW v7.0)\n');
-  
-  console.log('╔═══════════════════════════════════════════════════════════════════════════╗');
-  console.log('║                    🔗 API ENDPOINTS                                      ║');
-  console.log('╚═══════════════════════════════════════════════════════════════════════════╝\n');
+  console.log('╔═══════════════════════════════════════════════════════════════╗');
+  console.log('║               🔗 COMPLETE API ENDPOINTS                      ║');
+  console.log('╚═══════════════════════════════════════════════════════════════╝\n');
   
   console.log('🔐 AUTHENTICATION:');
-  console.log('  POST   /api/auth/signup                    - User registration');
-  console.log('  POST   /api/auth/login                     - User login');
-  console.log('  POST   /api/auth/admin/login               - Admin login');
-  console.log('  GET    /api/auth/admin/verify              - Verify admin token');
-  console.log('  POST   /api/auth/agent/login               - Agent login (NEW)');
-  console.log('  GET    /api/auth/agent/verify              - Verify agent token (NEW)');
-  console.log('  POST   /api/auth/send-email-otp            - Send verification OTP');
-  console.log('  POST   /api/auth/verify-email-otp          - Verify email OTP');
-  console.log('  POST   /api/auth/forgot-password           - Request password reset');
-  console.log('  POST   /api/auth/reset-password            - Reset password with code');
-  console.log('  POST   /api/auth/change-password           - Change password (authenticated)');
-  console.log('  POST   /api/auth/toggle-2fa                - Toggle two-factor authentication');
-  console.log('  DELETE /api/auth/delete-account            - Delete user account\n');
+  console.log('  POST   /api/auth/signup              - User signup');
+  console.log('  POST   /api/auth/login               - User login');
+  console.log('  POST   /api/auth/admin/login         - Admin login');
+  console.log('  GET    /api/auth/admin/verify        - Verify admin token');
+  console.log('  POST   /api/auth/send-email-otp      - Send verification OTP');
+  console.log('  POST   /api/auth/verify-email-otp    - Verify email OTP');
+  console.log('  POST   /api/auth/forgot-password     - Request password reset');
+  console.log('  POST   /api/auth/reset-password      - Reset password');
+  console.log('  POST   /api/auth/change-password     - Change password');
+  console.log('  POST   /api/auth/toggle-2fa          - Toggle 2FA');
+  console.log('  DELETE /api/auth/delete-account      - Delete account\n');
   
   console.log('📊 DASHBOARD & ANALYTICS:');
-  console.log('  GET    /api/admin/dashboard                - Dashboard overview with stats');
-  console.log('  GET    /api/admin/analytics                - Detailed analytics data');
-  console.log('  GET    /api/health                         - Server health check\n');
+  console.log('  GET    /api/admin/dashboard          - Dashboard overview');
+  console.log('  GET    /api/admin/analytics          - Analytics data\n');
   
   console.log('👥 USER MANAGEMENT:');
-  console.log('  GET    /api/admin/users                    - List all users (paginated)');
-  console.log('  GET    /api/admin/users/:userId            - Get user details');
-  console.log('  PUT    /api/admin/users/:userId/ban        - Ban/unban user');
-  console.log('  DELETE /api/admin/users/:userId            - Delete user');
-  console.log('  PUT    /api/admin/users/:userId/promote-agent  - Promote user to agent (NEW)');
-  console.log('  PUT    /api/admin/users/:userId/demote-agent   - Demote agent to user (NEW)');
-  console.log('  GET    /api/profile                        - Get user profile');
-  console.log('  PUT    /api/profile                        - Update user profile\n');
+  console.log('  GET    /api/admin/users              - List all users');
+  console.log('  GET    /api/admin/users/:userId      - Get user details');
+  console.log('  PUT    /api/admin/users/:userId/ban  - Ban/unban user');
+  console.log('  DELETE /api/admin/users/:userId      - Delete user');
+  console.log('  GET    /api/profile                  - Get user profile');
+  console.log('  PUT    /api/profile                  - Update profile\n');
   
   console.log('📦 ORDER MANAGEMENT:');
-  console.log('  GET    /api/admin/orders                   - List all orders (admin)');
-  console.log('  GET    /api/admin/orders/:orderId          - Get order details (admin)');
-  console.log('  PUT    /api/admin/orders/:orderId/status   - Update order status');
-  console.log('  DELETE /api/admin/orders/:orderId          - Delete order');
-  console.log('  GET    /api/orders                         - Get user orders');
-  console.log('  GET    /api/orders/detailed                - Get orders with download links');
-  console.log('  POST   /api/orders/create-with-coupon      - Create order with coupon');
-  console.log('  POST   /api/orders/verify-payment          - Verify Flutterwave payment\n');
+  console.log('  GET    /api/admin/orders             - List all orders (admin)');
+  console.log('  GET    /api/admin/orders/:orderId    - Get order details (admin)');
+  console.log('  PUT    /api/admin/orders/:orderId/status - Update order status');
+  console.log('  DELETE /api/admin/orders/:orderId    - Delete order');
+  console.log('  GET    /api/orders                   - Get user orders');
+  console.log('  GET    /api/orders/detailed          - Get orders with download links');
+  console.log('  POST   /api/orders/create-with-coupon - Create order with coupon');
+  console.log('  POST   /api/orders/verify-payment    - Verify Flutterwave payment\n');
   
-  console.log('📥 DOWNLOAD MANAGEMENT:');
-  console.log('  GET    /api/orders/detailed                - Orders with download links');
-  console.log('  POST   /api/orders/track-download          - Track product download');
-  console.log('  GET    /api/admin/downloads/stats          - Download statistics\n');
-  
-  console.log('🛍️  PRODUCT MANAGEMENT:');
-  console.log('  GET    /api/admin/products                 - List products (admin)');
-  console.log('  GET    /api/products                       - List products (public)');
-  console.log('  GET    /api/products/:id                   - Get product details');
-  console.log('  POST   /api/admin/products                 - Create product');
-  console.log('  PUT    /api/admin/products/:id             - Update product');
-  console.log('  DELETE /api/admin/products/:id             - Delete product');
-  console.log('  POST   /api/admin/products/seed-with-downloads - Seed sample products\n');
+  console.log('📥 DOWNLOAD MANAGEMENT (NEW):');
+  console.log('  GET    /api/orders/detailed          - Get orders with download links');
+  console.log('  POST   /api/orders/track-download    - Track product download');
+  console.log('  GET    /api/admin/downloads/stats    - Download statistics (admin)\n');
   
   console.log('🎫 COUPON MANAGEMENT:');
-  console.log('  GET    /api/admin/coupons                  - List all coupons');
-  console.log('  POST   /api/admin/coupons                  - Create coupon');
-  console.log('  PUT    /api/admin/coupons/:code            - Update coupon');
-  console.log('  DELETE /api/admin/coupons/:code            - Delete coupon');
-  console.log('  POST   /api/coupons/validate               - Validate coupon code');
-  console.log('  POST   /api/coupons/seed                   - Seed default coupons\n');
+  console.log('  GET    /api/admin/coupons            - List all coupons');
+  console.log('  POST   /api/admin/coupons            - Create coupon');
+  console.log('  PUT    /api/admin/coupons/:code      - Update coupon');
+  console.log('  DELETE /api/admin/coupons/:code      - Delete coupon');
+  console.log('  POST   /api/coupons/validate         - Validate coupon code');
+  console.log('  POST   /api/coupons/seed             - Seed default coupons\n');
+  
+  console.log('🛍️  PRODUCT MANAGEMENT:');
+  console.log('  GET    /api/admin/products           - List products (admin)');
+  console.log('  GET    /api/products                 - List products (public)');
+  console.log('  GET    /api/products/:id             - Get product details');
+  console.log('  POST   /api/admin/products           - Create product');
+  console.log('  PUT    /api/admin/products/:id       - Update product (includes downloadLink)');
+  console.log('  DELETE /api/admin/products/:id       - Delete product');
+  console.log('  POST   /api/admin/products/seed-with-downloads - Seed sample products\n');
   
   console.log('📝 BLOG MANAGEMENT:');
-  console.log('  GET    /api/admin/blog/posts               - List all posts (admin)');
-  console.log('  POST   /api/admin/blog/posts               - Create blog post');
-  console.log('  PUT    /api/admin/blog/posts/:id           - Update blog post');
-  console.log('  DELETE /api/admin/blog/posts/:id           - Delete blog post');
-  console.log('  GET    /api/blog/posts                     - List published posts');
-  console.log('  GET    /api/blog/posts/:slug               - Get single post');
-  console.log('  POST   /api/blog/posts/:id/like            - Like post');
-  console.log('  POST   /api/blog/posts/:id/comments        - Add comment');
+  console.log('  GET    /api/admin/blog/posts         - List all posts (admin)');
+  console.log('  POST   /api/admin/blog/posts         - Create blog post');
+  console.log('  PUT    /api/admin/blog/posts/:id     - Update blog post');
+  console.log('  DELETE /api/admin/blog/posts/:id     - Delete blog post');
+  console.log('  GET    /api/blog/posts               - List published posts');
+  console.log('  GET    /api/blog/posts/:slug         - Get single post');
+  console.log('  POST   /api/blog/posts/:id/like      - Like post');
+  console.log('  POST   /api/blog/posts/:id/comments  - Add comment');
   console.log('  PUT    /api/admin/blog/posts/:postId/comments/:commentId/approve');
-  console.log('  DELETE /api/admin/blog/posts/:postId/comments/:commentId');
-  console.log('  GET    /api/blog/categories                - Get blog categories');
-  console.log('  GET    /api/blog/search                    - Search blog posts');
-  console.log('  GET    /api/blog/featured                  - Get featured posts');
-  console.log('  GET    /api/blog/posts/:id/related         - Get related posts\n');
-  
-  console.log('💬 CHAT & SUPPORT (NEW v7.0):');
-  console.log('  POST   /api/chat/start                     - Start new chat session');
-  console.log('  GET    /api/chat/:chatId                   - Get chat details');
-  console.log('  POST   /api/chat/:chatId/send              - Send message in chat');
-  console.log('  POST   /api/chat/upload                    - Upload files in chat');
-  console.log('  POST   /api/chat/:chatId/read              - Mark messages as read');
-  console.log('  POST   /api/chat/:chatId/end               - End chat session');
-  console.log('  POST   /api/chat/:chatId/resolve           - Mark chat as resolved\n');
-  
-  console.log('👨‍💼 AGENT DASHBOARD (NEW v7.0):');
-  console.log('  GET    /api/agent/chats                    - Get agent chats');
-  console.log('  POST   /api/agent/chats/:chatId/assign     - Assign chat to agent');
-  console.log('  PUT    /api/agent/status                   - Update agent status');
-  console.log('  GET    /api/agent/stats                    - Get agent statistics');
-  console.log('  GET    /api/admin/agents                   - List all agents');
-  console.log('  PUT    /api/admin/agents/:agentId          - Update agent settings\n');
+  console.log('  GET    /api/blog/categories          - Get blog categories');
+  console.log('  GET    /api/blog/search              - Search blog posts');
+  console.log('  GET    /api/blog/featured            - Get featured posts\n');
   
   console.log('⚙️  SYSTEM SETTINGS:');
-  console.log('  GET    /api/admin/settings                 - Get system settings');
-  console.log('  PUT    /api/admin/settings                 - Update settings');
-  console.log('  GET    /api/settings/public                - Get public settings\n');
+  console.log('  GET    /api/admin/settings           - Get system settings');
+  console.log('  PUT    /api/admin/settings           - Update settings');
+  console.log('  GET    /api/settings/public          - Get public settings\n');
   
   console.log('👤 USER PREFERENCES:');
-  console.log('  GET    /api/user/notifications             - Get notification preferences');
-  console.log('  PUT    /api/user/notifications/update      - Update preferences');
-  console.log('  GET    /api/user/payment-methods           - Get payment methods');
-  console.log('  POST   /api/user/payment-methods/add       - Add payment method\n');
+  console.log('  GET    /api/user/notifications       - Get notification preferences');
+  console.log('  PUT    /api/user/notifications/update - Update preferences');
+  console.log('  GET    /api/user/payment-methods     - Get payment methods');
+  console.log('  POST   /api/user/payment-methods/add - Add payment method\n');
   
-  console.log('🔌 WEBSOCKET:');
-  console.log(`  ws://localhost:${PORT}/ws?chatId=XXX       - Connect to chat`);
-  console.log(`  ws://localhost:${PORT}/ws?agentId=XXX      - Connect as agent`);
-  console.log(`  ws://localhost:${PORT}/ws?customerId=XXX   - Connect as customer`);
-  console.log(`  └─ Active Connections: ${wss.clients.size}`);
-  console.log(`  └─ Active Chats: ${activeConnections.size}`);
-  console.log(`  └─ Online Agents: ${agentConnections.size}`);
-  console.log(`  └─ Online Customers: ${customerConnections.size}\n`);
-  
-  console.log('════════════════════════════════════════════════════════════════════════════');
-  console.log('🔐 QUICK START GUIDE:');
-  console.log('════════════════════════════════════════════════════════════════════════════');
+  console.log('════════════════════════════════════════════════════════════════');
+  console.log('🔐 ADMIN SETUP INSTRUCTIONS:');
+  console.log('════════════════════════════════════════════════════════════════');
   console.log(`  1. Sign up with email: ${ADMIN_EMAIL}`);
   console.log('  2. System automatically grants admin privileges');
-  console.log('  3. Login at admin-dashboard.html');
-  console.log('  4. Create products and add download links');
-  console.log('  5. Seed default coupons: POST /api/coupons/seed');
-  console.log('  6. Seed sample products: POST /api/admin/products/seed-with-downloads');
-  console.log('  7. Promote users to agents for chat support\n');
+  console.log('  3. Login at Admind.html');
+  console.log('  4. Access admin dashboard at admin-dashboard.html\n');
   
   console.log('📥 DOWNLOAD LINK SETUP:');
-  console.log('════════════════════════════════════════════════════════════════════════════');
-  console.log('  1. Upload files to Google Drive or any cloud storage');
+  console.log('════════════════════════════════════════════════════════════════');
+  console.log('  1. Upload files to Google Drive');
   console.log('  2. Set sharing to "Anyone with the link"');
-  console.log('  3. Get direct download link');
-  console.log('  4. Add to product via admin dashboard or API');
-  console.log('  5. For Google Drive, use format:');
-  console.log('     https://drive.google.com/uc?export=download&id=FILE_ID\n');
+  console.log('  3. Copy link and add to product in admin dashboard');
+  console.log('  4. Use direct download format:');
+  console.log('     https://drive.google.com/uc?export=download&id=FILE_ID');
+  console.log('  5. Or use POST /api/admin/products/seed-with-downloads\n');
   
-  console.log('👨‍💼 AGENT SETUP:');
-  console.log('════════════════════════════════════════════════════════════════════════════');
-  console.log('  1. Create/login to a regular user account');
-  console.log('  2. Admin promotes user to agent via API or manually in database');
-  console.log('  3. Login at agent-login.html');
-  console.log('  4. Start receiving and responding to customer chats\n');
+  console.log('🎯 QUICK START COMMANDS:');
+  console.log('════════════════════════════════════════════════════════════════');
+  console.log('  Seed Coupons:  POST /api/coupons/seed');
+  console.log('  Seed Products: POST /api/admin/products/seed-with-downloads\n');
   
-  console.log('🚀 DEPLOYMENT CHECKLIST:');
-  console.log('════════════════════════════════════════════════════════════════════════════');
-  console.log('  ✓ Update NODE_ENV=production in .env');
-  console.log('  ✓ Use LIVE Flutterwave keys (not TEST)');
-  console.log('  ✓ Update BASE_URL to your domain');
-  console.log('  ✓ Set strong JWT_SECRET (different from development)');
-  console.log('  ✓ Configure MongoDB Atlas IP whitelist');
-  console.log('  ✓ Enable SSL/HTTPS');
-  console.log('  ✓ Set up monitoring and logging');
-  console.log('  ✓ Configure backup strategy');
-  console.log('  ✓ Test all endpoints before launch\n');
-  
-  console.log('✅ Server ready to accept connections!');
-  console.log('🎉 UYEH TECH v7.0 - All systems operational!\n');
+  console.log('✅ Server ready to accept connections!\n');
 });
 
-// ═════════════════════════════════════════════════════════════════════════════
-// ERROR HANDLING
-// ═════════════════════════════════════════════════════════════════════════════
-
-// Handle unhandled promise rejections
+// ========== ERROR HANDLING ==========
 process.on('unhandledRejection', (err) => {
-  console.error('\n❌ Unhandled Promise Rejection:');
-  console.error(err);
-  console.error('Stack:', err.stack);
+  console.error('❌ Unhandled Promise Rejection:', err);
 });
 
-// Handle uncaught exceptions
 process.on('uncaughtException', (err) => {
-  console.error('\n❌ Uncaught Exception:');
-  console.error(err);
-  console.error('Stack:', err.stack);
-  
-  // Graceful shutdown
-  console.log('⚠️  Server shutting down due to uncaught exception...');
-  server.close(() => {
-    process.exit(1);
-  });
+  console.error('❌ Uncaught Exception:', err);
+  process.exit(1);
 });
 
-// Handle SIGTERM signal (graceful shutdown)
 process.on('SIGTERM', async () => {
-  console.log('\n⚠️  SIGTERM signal received: closing HTTP server');
-  
-  // Close server
-  server.close(async () => {
-    console.log('✅ HTTP server closed');
-    
-    // Close MongoDB connection
-    try {
-      await mongoose.connection.close();
-      console.log('✅ MongoDB connection closed');
-    } catch (error) {
-      console.error('❌ Error closing MongoDB:', error);
-    }
-    
-    // Close WebSocket connections
-    wss.clients.forEach((client) => {
-      client.close();
-    });
-    console.log('✅ WebSocket connections closed');
-    
-    process.exit(0);
-  });
+  console.log('\n⚠️  SIGTERM signal received');
+  await mongoose.connection.close();
+  console.log('✅ MongoDB connection closed');
+  process.exit(0);
 });
 
-// Handle SIGINT signal (Ctrl+C)
 process.on('SIGINT', async () => {
-  console.log('\n⚠️  SIGINT signal received: closing server');
-  
-  // Close server
-  server.close(async () => {
-    console.log('✅ HTTP server closed');
-    
-    // Close MongoDB connection
-    try {
-      await mongoose.connection.close();
-      console.log('✅ MongoDB connection closed');
-    } catch (error) {
-      console.error('❌ Error closing MongoDB:', error);
-    }
-    
-    // Close WebSocket connections
-    wss.clients.forEach((client) => {
-      client.close();
+  console.log('\n⚠️  SIGINT signal received');
+  await mongoose.connection.close();
+  console.log('✅ MongoDB connection closed');
+  process.exit(0);
+});
+
+console.log('✅ Part 6 loaded: Server startup complete!');
+console.log('\n🎉 ALL 6 PARTS LOADED SUCCESSFULLY! SERVER v6.0 READY!\n');
+
+// ========== END OF PART 6 ==========
+// ========== SERVER v6.0 COMPLETE WITH DOWNLOAD LINKS ==========
+
+/*
+═══════════════════════════════════════════════════════════════════════════
+                  UYEH TECH SERVER v6.0 - COMPLETE DOCUMENTATION
+═══════════════════════════════════════════════════════════════════════════
+
+VERSION: 6.0.0 with Download Links
+RELEASE DATE: December 2024
+STATUS: Production Ready
+ADMIN EMAIL: uyehtech@gmail.com
+
+COMPLETE INSTALLATION GUIDE:
+───────────────────────────────────────────────────────────────────────────
+1. CREATE PROJECT:
+   mkdir uyeh-tech-server
+   cd uyeh-tech-server
+   npm init -y
+
+2. INSTALL DEPENDENCIES:
+   npm install express mongoose bcryptjs jsonwebtoken cors axios dotenv
+
+3. CREATE server.js:
+   - Copy all 6 parts into a single server.js file
+   - Parts must be in order (1-6)
+
+4. CREATE .env FILE:
+   MONGO_URI=your_mongodb_connection_string
+   JWT_SECRET=your_secret_key_here
+   TERMII_API_KEY=your_termii_key (optional)
+   TERMII_SENDER_EMAIL=noreply@uyehtech.com
+   FLUTTERWAVE_SECRET_KEY=your_flutterwave_key
+   PORT=3000
+   NODE_ENV=production
+
+5. RUN SERVER:
+   node server.js
+
+DOWNLOAD LINK FEATURE - COMPLETE GUIDE:
+───────────────────────────────────────────────────────────────────────────
+✨ NEW FEATURES IN v6.0:
+  ✅ Download link field in Product schema
+  ✅ Enhanced orders endpoint with download links
+  ✅ Download tracking system
+  ✅ Download statistics for admins
+  ✅ Automatic product linking to orders
+  ✅ Sample products with download links
+
+📥 SETTING UP DOWNLOAD LINKS:
+
+OPTION 1: Google Drive (Recommended for beginners)
+  1. Upload your product file to Google Drive
+  2. Right-click → Share → Change to "Anyone with the link"
+  3. Copy the link (looks like: drive.google.com/file/d/FILE_ID/view)
+  4. Extract the FILE_ID from the URL
+  5. Use direct download format in product:
+     https://drive.google.com/uc?export=download&id=FILE_ID
+  6. Or use view format (users click to download):
+     https://drive.google.com/file/d/FILE_ID/view?usp=sharing
+
+OPTION 2: Dropbox
+  1. Upload file to Dropbox
+  2. Get shareable link
+  3. Add ?dl=1 to the end for direct download
+  4. Example: https://www.dropbox.com/s/FILE_ID/file.zip?dl=1
+
+OPTION 3: Your Own Server
+  1. Upload files to your server
+  2. Use direct URL: https://yourserver.com/downloads/product.zip
+  3. Make sure files are publicly accessible
+
+OPTION 4: AWS S3 / Cloudflare R2
+  1. Upload to cloud storage
+  2. Generate public or presigned URLs
+  3. Use those URLs as download links
+
+📝 ADDING DOWNLOAD LINKS TO PRODUCTS:
+
+METHOD 1: Admin Dashboard
+  1. Login to admin dashboard (admin-dashboard.html)
+  2. Go to Products section
+  3. Create or Edit product
+  4. Add download link in the "Download Link" field
+  5. Save product
+
+METHOD 2: API Request
+  POST /api/admin/products
+  {
+    "title": "Product Name",
+    "description": "Description",
+    "category": "Category",
+    "price": 49.99,
+    "downloadLink": "https://drive.google.com/uc?export=download&id=YOUR_FILE_ID",
+    "fileSize": "5.2 MB",
+    "version": "1.0"
+  }
+
+METHOD 3: Seed Sample Products
+  POST /api/admin/products/seed-with-downloads
+  (Remember to update the FILE_ID placeholders in the code!)
+
+🎯 HOW DOWNLOAD LINKS WORK:
+
+1. CUSTOMER PURCHASES:
+   - Customer completes order
+   - Order status becomes "completed"
+   - Download links are accessible
+
+2. ACCESSING DOWNLOADS:
+   - Customer visits my-orders.html or success.html
+   - Frontend calls GET /api/orders/detailed
+   - Response includes full product details with download links
+   - Customer can download immediately
+
+3. DOWNLOAD TRACKING:
+   - When customer clicks download button
+   - Frontend calls POST /api/orders/track-download
+   - System records: user, product, order, timestamp, IP, user-agent
+   - Admin can view download statistics
+
+4. ADMIN MONITORING:
+   - View download stats: GET /api/admin/downloads/stats
+   - See: total downloads, popular products, recent downloads
+   - Track download trends over time
+
+API ENDPOINTS FOR DOWNLOAD SYSTEM:
+───────────────────────────────────────────────────────────────────────────
+📥 USER ENDPOINTS:
+  GET  /api/orders/detailed
+    - Returns orders with full product details including download links
+    - Only shows downloads for completed orders
+    - Automatically links products to order items
+
+  POST /api/orders/track-download
+    Body: { "productId": "...", "orderId": "..." }
+    - Tracks when user downloads a product
+    - Verifies user owns the order
+    - Records download statistics
+
+📊 ADMIN ENDPOINTS:
+  GET  /api/admin/downloads/stats
+    - Total downloads count
+    - Most popular products
+    - Recent downloads list
+    - Downloads by date (last 30 days)
+
+  POST /api/admin/products/seed-with-downloads
+    - Seeds 4 sample products with download links
+    - Includes templates, components, and courses
+    - Remember to update FILE_IDs!
+
+FRONTEND INTEGRATION EXAMPLE:
+───────────────────────────────────────────────────────────────────────────
+// Fetch orders with download links
+const response = await fetch('http://localhost:3000/api/orders/detailed', {
+  headers: { 'Authorization': `Bearer ${token}` }
+});
+const data = await response.json();
+
+// Display download buttons for completed orders
+data.orders.forEach(order => {
+  if (order.canDownload) {
+    order.items.forEach(item => {
+      if (item.downloadLink) {
+        // Show download button
+        console.log(`Download: ${item.title}`);
+        console.log(`Link: ${item.downloadLink}`);
+        
+        // Track download when clicked
+        await fetch('http://localhost:3000/api/orders/track-download', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            productId: item.productId,
+            orderId: order._id
+          })
+        });
+      }
     });
-    console.log('✅ WebSocket connections closed');
-    
-    console.log('👋 UYEH TECH Server v7.0 - Shutdown complete');
-    process.exit(0);
-  });
-});
-
-// Handle database disconnection
-mongoose.connection.on('disconnected', () => {
-  console.warn('⚠️  MongoDB connection lost');
-});
-
-// Handle database reconnection
-mongoose.connection.on('reconnected', () => {
-  console.log('✅ MongoDB reconnected');
-});
-
-// Handle database errors
-mongoose.connection.on('error', (err) => {
-  console.error('❌ MongoDB error:', err);
-});
-
-// ═════════════════════════════════════════════════════════════════════════════
-// HEALTH CHECK ENDPOINT
-// ═════════════════════════════════════════════════════════════════════════════
-
-app.get('/api/health', (req, res) => {
-  const healthcheck = {
-    uptime: process.uptime(),
-    message: 'Server is healthy',
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development',
-    version: '7.0.0',
-    services: {
-      http: 'operational',
-      websocket: wss.clients.size > 0 || wss.clients.size === 0 ? 'operational' : 'error',
-      mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
-      email: TERMII_API_KEY ? 'configured' : 'not configured',
-      payment: FLUTTERWAVE_SECRET_KEY ? 'configured' : 'not configured'
-    },
-    websocket: {
-      activeConnections: wss.clients.size,
-      activeChats: activeConnections.size,
-      onlineAgents: agentConnections.size,
-      onlineCustomers: customerConnections.size
-    }
-  };
-  
-  try {
-    res.status(200).json(healthcheck);
-  } catch (error) {
-    healthcheck.message = 'Server error';
-    res.status(503).json(healthcheck);
   }
 });
 
-console.log('\n✅ Part 7 Loaded: Server Startup, Error Handling & Health Check Complete');
-console.log('🎉 ALL 7 PARTS LOADED SUCCESSFULLY! UYEH TECH SERVER v7.0 READY!\n');
+SECURITY CONSIDERATIONS:
+───────────────────────────────────────────────────────────────────────────
+✅ Download verification:
+  - Only completed orders can download
+  - User must own the order
+  - JWT authentication required
 
-// ═════════════════════════════════════════════════════════════════════════════
-// END OF PART 7 - SERVER COMPLETE!
-// ═════════════════════════════════════════════════════════════════════════════
+✅ Link protection options:
+  - Use presigned URLs (AWS S3, R2)
+  - Implement download tokens
+  - Set expiring links
+  - Limit download attempts
 
-/* 
-╔═══════════════════════════════════════════════════════════════════════════════╗
-║                         🎉 CONGRATULATIONS!                                   ║
-║                                                                               ║
-║             UYEH TECH Backend Server v7.0 is Now Complete!                   ║
-║                                                                               ║
-║  All 7 parts have been successfully loaded and integrated.                   ║
-║  Your server now includes:                                                   ║
-║                                                                               ║
-║  ✅ Complete User Authentication System                                      ║
-║  ✅ Admin Dashboard with Analytics                                           ║
-║  ✅ Product & Order Management                                               ║
-║  ✅ Download Tracking System                                                 ║
-║  ✅ Coupon & Discount System                                                 ║
-║  ✅ Blog Management Platform                                                 ║
-║  ✅ Real-time Chat System (NEW!)                                             ║d
-║  ✅ Agent Dashboard & Management (NEW!)                                      ║
-║  ✅ File Upload Support (NEW!)                                               ║
-║  ✅ WebSocket Real-time Updates (NEW!)                                       ║
-║                                                                               ║
-║  Your server is production-ready and fully operational!                      ║
-║                                                                               ║
-║  Next Steps:                                                                 ║
-║  1. Test all endpoints                                                       ║
-║  2. Configure your .env file                                                 ║
-║  3. Add products and download links                                          ║
-║  4. Promote users to agents                                                  ║
-║  5. Deploy to production                                                     ║
-║                                                                               ║
-║  Happy coding! 🚀                                                            ║
-╚═══════════════════════════════════════════════════════════════════════════════╝
+✅ File storage best practices:
+  - Don't store sensitive files publicly
+  - Use CDN for large files
+  - Monitor bandwidth usage
+  - Consider download limits per user
+
+COMPLETE FEATURE CHECKLIST:
+───────────────────────────────────────────────────────────────────────────
+✅ Admin Dashboard System
+✅ User Management (Ban, Delete, View)
+✅ Order Management (Track, Update, Refund)
+✅ Product Management (CRUD Operations)
+✅ Download Link Management (NEW!)
+✅ Download Tracking System (NEW!)
+✅ Download Statistics (NEW!)
+✅ Coupon System (Create, Validate)
+✅ Blog Management (Posts, Comments, SEO)
+✅ Analytics Dashboard (Revenue, Orders, Downloads)
+✅ Email OTP Verification
+✅ Payment Integration (Flutterwave)
+✅ 2FA Support
+✅ System Settings
+✅ User Preferences
+✅ Profile Management
+✅ Password Reset
+✅ Ban System
+
+TESTING THE DOWNLOAD SYSTEM:
+───────────────────────────────────────────────────────────────────────────
+1. Start server: node server.js
+2. Create admin account with uyehtech@gmail.com
+3. Seed products: POST /api/admin/products/seed-with-downloads
+4. Update FILE_IDs in seeded products
+5. Create test order with test user
+6. Mark order as completed (admin dashboard)
+7. Test user fetches orders: GET /api/orders/detailed
+8. Download links should appear
+9. Track download: POST /api/orders/track-download
+10. View stats: GET /api/admin/downloads/stats
+
+TROUBLESHOOTING:
+───────────────────────────────────────────────────────────────────────────
+❌ Download links not showing?
+  → Check order status is "completed"
+  → Verify product has downloadLink field populated
+  → Check user authentication token
+
+❌ Google Drive links not working?
+  → Ensure file sharing is "Anyone with the link"
+  → Use correct format: drive.google.com/uc?export=download&id=FILE_ID
+  → Check file ID is correct
+
+❌ Download tracking not working?
+  → Verify productId and orderId are valid
+  → Check user owns the order
+  → Ensure authentication token is valid
+
+SUPPORT:
+───────────────────────────────────────────────────────────────────────────
+For issues or questions:
+  📧 Email: uyehtech@gmail.com
+  📝 Check server logs for detailed error messages
+  🔍 Use console.log statements for debugging
+
+═══════════════════════════════════════════════════════════════════════════
+                    🎉 SERVER v6.0 COMPLETE & READY!
+                       WITH FULL DOWNLOAD LINK SUPPORT
+═══════════════════════════════════════════════════════════════════════════
 */
+
+// ========== UYEH TECH SUPPORT SYSTEM SERVER ==========
+// Complete Support Agent System with Real-time Chat
+// WebSocket Integration, Desktop Notifications, File Uploads
+// Admin Email: uyehtech@gmail.com
+// Agent Emails: uyehsub@gmail.com, okonb310@gmail.com, bayortv002@gmail.com
+
+const express = require('express');
+const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const cors = require('cors');
+const http = require('http');
+const socketIo = require('socket.io');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+require('dotenv').config();
+
+const app = express();
+const server = http.createServer(app);
+const io = socketIo(server, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST']
+  }
+});
+
+// ========== CONFIGURATION ==========
+const MONGO_URI = process.env.MONGO_URI;
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-here';
+const PORT = process.env.PORT || 3000;
+
+const ADMIN_EMAIL = 'uyehtech@gmail.com';
+const ALLOWED_AGENT_EMAILS = [
+  'uyehsub@gmail.com',
+  'okonb310@gmail.com',
+  'bayortv002@gmail.com'
+];
+
+// ========== MIDDLEWARE ==========
+app.use(cors({ origin: '*', methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'] }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use('/uploads', express.static('uploads'));
+
+// Create uploads directory
+if (!fs.existsSync('./uploads')) {
+  fs.mkdirSync('./uploads');
+}
+
+// ========== FILE UPLOAD CONFIGURATION ==========
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, 'uploads/');
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = /jpeg|jpg|png|gif|pdf|doc|docx|txt|zip/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+    if (mimetype && extname) {
+      return cb(null, true);
+    }
+    cb(new Error('Invalid file type'));
+  }
+});
+
+// ========== MONGODB CONNECTION ==========
+mongoose.connect(MONGO_URI)
+  .then(() => console.log('✅ MongoDB Connected'))
+  .catch(err => console.error('❌ MongoDB Error:', err));
+
+// ========== SCHEMAS ==========
+
+// Support Agent Schema
+const supportAgentSchema = new mongoose.Schema({
+  fullName: { type: String, required: true },
+  email: { type: String, required: true, unique: true, lowercase: true },
+  password: { type: String, required: true },
+  role: { type: String, enum: ['agent', 'super_admin'], default: 'agent' },
+  status: { type: String, enum: ['online', 'offline', 'away'], default: 'offline' },
+  avatar: String,
+  department: String,
+  isActive: { type: Boolean, default: true },
+  stats: {
+    totalTickets: { type: Number, default: 0 },
+    resolvedTickets: { type: Number, default: 0 },
+    avgResponseTime: { type: Number, default: 0 },
+    satisfaction: { type: Number, default: 0 }
+  },
+  lastSeen: Date,
+  createdAt: { type: Date, default: Date.now },
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'SupportAgent' }
+});
+
+const SupportAgent = mongoose.model('SupportAgent', supportAgentSchema);
+
+// Support Ticket Schema
+const supportTicketSchema = new mongoose.Schema({
+  ticketNumber: { type: String, required: true, unique: true },
+  customerName: { type: String, required: true },
+  customerEmail: { type: String, required: true },
+  subject: { type: String, required: true },
+  category: { type: String, default: 'general' },
+  priority: { type: String, enum: ['low', 'medium', 'high', 'urgent'], default: 'medium' },
+  status: { type: String, enum: ['open', 'in_progress', 'pending', 'resolved', 'closed'], default: 'open' },
+  assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'SupportAgent' },
+  tags: [String],
+  messages: [{
+    sender: String, // 'customer' or 'agent'
+    senderName: String,
+    message: String,
+    isInternal: { type: Boolean, default: false }, // Internal notes
+    attachments: [{
+      filename: String,
+      url: String,
+      size: Number
+    }],
+    timestamp: { type: Date, default: Date.now }
+  }],
+  satisfaction: {
+    rating: Number,
+    feedback: String,
+    ratedAt: Date
+  },
+  metadata: {
+    browser: String,
+    ip: String,
+    referrer: String,
+    userAgent: String
+  },
+  sessionId: String, // For linking widget conversations
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now },
+  resolvedAt: Date,
+  firstResponseAt: Date,
+  closedAt: Date
+});
+
+supportTicketSchema.index({ ticketNumber: 1 });
+supportTicketSchema.index({ customerEmail: 1 });
+supportTicketSchema.index({ status: 1 });
+supportTicketSchema.index({ assignedTo: 1 });
+
+const SupportTicket = mongoose.model('SupportTicket', supportTicketSchema);
+
+// Canned Response Schema
+const cannedResponseSchema = new mongoose.Schema({
+  title: { type: String, required: true },
+  shortcut: { type: String, required: true, unique: true },
+  message: { type: String, required: true },
+  category: String,
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'SupportAgent' },
+  createdAt: { type: Date, default: Date.now }
+});
+
+const CannedResponse = mongoose.model('CannedResponse', cannedResponseSchema);
+
+// Chat Session Schema (for widget)
+const chatSessionSchema = new mongoose.Schema({
+  sessionId: { type: String, required: true, unique: true },
+  customerName: String,
+  customerEmail: String,
+  status: { type: String, enum: ['active', 'closed'], default: 'active' },
+  assignedAgent: { type: mongoose.Schema.Types.ObjectId, ref: 'SupportAgent' },
+  messages: [{
+    sender: String, // 'customer' or 'agent'
+    senderName: String,
+    message: String,
+    timestamp: { type: Date, default: Date.now }
+  }],
+  metadata: {
+    browser: String,
+    ip: String,
+    userAgent: String
+  },
+  createdAt: { type: Date, default: Date.now },
+  lastMessageAt: { type: Date, default: Date.now }
+});
+
+chatSessionSchema.index({ sessionId: 1 });
+chatSessionSchema.index({ status: 1 });
+
+const ChatSession = mongoose.model('ChatSession', chatSessionSchema);
+
+// ========== WEBSOCKET MANAGEMENT ==========
+const connectedAgents = new Map(); // Map of agentId -> socketId
+const connectedCustomers = new Map(); // Map of sessionId -> socketId
+
+io.on('connection', (socket) => {
+  console.log('🔌 New connection:', socket.id);
+
+  // Agent connects
+  socket.on('agent:connect', async (data) => {
+    const { agentId, token } = data;
+    try {
+      jwt.verify(token, JWT_SECRET);
+      connectedAgents.set(agentId, socket.id);
+      socket.agentId = agentId;
+      
+      // Update agent status
+      await SupportAgent.findByIdAndUpdate(agentId, {
+        status: 'online',
+        lastSeen: new Date()
+      });
+
+      // Broadcast to all agents
+      io.emit('agent:status', { agentId, status: 'online' });
+      
+      console.log(`✅ Agent ${agentId} connected`);
+    } catch (error) {
+      console.error('Agent connect error:', error);
+    }
+  });
+
+  // Customer connects via widget
+  socket.on('customer:connect', (data) => {
+    const { sessionId } = data;
+    connectedCustomers.set(sessionId, socket.id);
+    socket.sessionId = sessionId;
+    console.log(`✅ Customer ${sessionId} connected`);
+    
+    // Notify all agents of new customer
+    io.emit('customer:online', { sessionId });
+  });
+
+  // Agent sends message
+  socket.on('agent:message', async (data) => {
+    const { ticketId, sessionId, message, agentName } = data;
+    
+    try {
+      if (ticketId) {
+        // Add message to ticket
+        const ticket = await SupportTicket.findById(ticketId);
+        ticket.messages.push({
+          sender: 'agent',
+          senderName: agentName,
+          message: message,
+          timestamp: new Date()
+        });
+        ticket.updatedAt = new Date();
+        await ticket.save();
+
+        // Broadcast to all agents
+        io.emit('ticket:update', { ticketId, ticket });
+      }
+
+      if (sessionId) {
+        // Send to customer in widget
+        const customerSocket = connectedCustomers.get(sessionId);
+        if (customerSocket) {
+          io.to(customerSocket).emit('agent:reply', {
+            message,
+            agentName,
+            timestamp: new Date()
+          });
+        }
+
+        // Update chat session
+        await ChatSession.findOneAndUpdate(
+          { sessionId },
+          {
+            $push: {
+              messages: {
+                sender: 'agent',
+                senderName: agentName,
+                message,
+                timestamp: new Date()
+              }
+            },
+            lastMessageAt: new Date()
+          }
+        );
+      }
+    } catch (error) {
+      console.error('Agent message error:', error);
+    }
+  });
+
+  // Customer sends message
+  socket.on('customer:message', async (data) => {
+    const { sessionId, message, customerName, customerEmail } = data;
+    
+    try {
+      // Update or create chat session
+      let session = await ChatSession.findOne({ sessionId });
+      
+      if (!session) {
+        session = new ChatSession({
+          sessionId,
+          customerName,
+          customerEmail,
+          messages: []
+        });
+      }
+
+      session.messages.push({
+        sender: 'customer',
+        senderName: customerName,
+        message,
+        timestamp: new Date()
+      });
+      session.lastMessageAt = new Date();
+      await session.save();
+
+      // Notify all agents with sound notification trigger
+      io.emit('customer:new_message', {
+        sessionId,
+        customerName,
+        message,
+        timestamp: new Date(),
+        playSound: true
+      });
+
+      console.log(`💬 New message from ${customerName}`);
+    } catch (error) {
+      console.error('Customer message error:', error);
+    }
+  });
+
+  // Agent typing indicator
+  socket.on('agent:typing', (data) => {
+    const { sessionId, agentName, isTyping } = data;
+    const customerSocket = connectedCustomers.get(sessionId);
+    if (customerSocket) {
+      io.to(customerSocket).emit('agent:typing', { agentName, isTyping });
+    }
+  });
+
+  // Customer typing indicator
+  socket.on('customer:typing', (data) => {
+    const { sessionId, isTyping } = data;
+    io.emit('customer:typing', { sessionId, isTyping });
+  });
+
+  // Disconnect
+  socket.on('disconnect', async () => {
+    if (socket.agentId) {
+      connectedAgents.delete(socket.agentId);
+      
+      // Update agent status
+      await SupportAgent.findByIdAndUpdate(socket.agentId, {
+        status: 'offline',
+        lastSeen: new Date()
+      });
+
+      io.emit('agent:status', { agentId: socket.agentId, status: 'offline' });
+      console.log(`❌ Agent ${socket.agentId} disconnected`);
+    }
+
+    if (socket.sessionId) {
+      connectedCustomers.delete(socket.sessionId);
+      io.emit('customer:offline', { sessionId: socket.sessionId });
+      console.log(`❌ Customer ${socket.sessionId} disconnected`);
+    }
+  });
+});
+
+// ========== MIDDLEWARE ==========
+function authenticateAgent(req, res, next) {
+  const token = req.headers['authorization']?.split(' ')[1];
+  if (!token) return res.status(401).json({ success: false, message: 'Token required' });
+
+  jwt.verify(token, JWT_SECRET, async (err, decoded) => {
+    if (err) return res.status(403).json({ success: false, message: 'Invalid token' });
+    
+    const agent = await SupportAgent.findById(decoded.agentId);
+    if (!agent || !agent.isActive) {
+      return res.status(403).json({ success: false, message: 'Agent not found or inactive' });
+    }
+
+    req.agent = agent;
+    next();
+  });
+}
+
+function authenticateSuperAdmin(req, res, next) {
+  authenticateAgent(req, res, () => {
+    if (req.agent.role !== 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Super admin access required' });
+    }
+    next();
+  });
+}
+
+// ========== ROUTES ==========
+
+app.get('/', (req, res) => {
+  res.json({
+    message: '🎯 UYEH TECH Support System v1.0',
+    features: [
+      '✅ Real-time WebSocket chat',
+      '✅ Desktop notifications',
+      '✅ File attachments',
+      '✅ Canned responses',
+      '✅ Agent management',
+      '✅ Ticket system',
+      '✅ Live chat widget',
+      '✅ Internal notes',
+      '✅ Agent status tracking',
+      '✅ Performance metrics'
+    ]
+  });
+});
+
+// ========== AGENT AUTHENTICATION ==========
+
+app.post('/api/support/agent/signup', async (req, res) => {
+  try {
+    const { fullName, email, password, signupKey } = req.body;
+
+    // Verify email is allowed
+    if (!ALLOWED_AGENT_EMAILS.includes(email.toLowerCase())) {
+      return res.status(403).json({
+        success: false,
+        message: 'Email not authorized for agent account'
+      });
+    }
+
+    // Check if already exists
+    const existing = await SupportAgent.findOne({ email: email.toLowerCase() });
+    if (existing) {
+      return res.status(400).json({ success: false, message: 'Agent already exists' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
+    // Determine role
+    const role = email.toLowerCase() === ADMIN_EMAIL ? 'super_admin' : 'agent';
+
+    const agent = new SupportAgent({
+      fullName,
+      email: email.toLowerCase(),
+      password: hashedPassword,
+      role,
+      isActive: true
+    });
+
+    await agent.save();
+
+    const token = jwt.sign({ agentId: agent._id, role: agent.role }, JWT_SECRET, { expiresIn: '7d' });
+
+    res.status(201).json({
+      success: true,
+      message: 'Agent account created',
+      token,
+      agent: {
+        id: agent._id,
+        name: agent.fullName,
+        email: agent.email,
+        role: agent.role
+      }
+    });
+  } catch (error) {
+    console.error('Agent signup error:', error);
+    res.status(500).json({ success: false, message: 'Signup failed' });
+  }
+});
+
+app.post('/api/support/agent/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    const agent = await SupportAgent.findOne({ email: email.toLowerCase() });
+    if (!agent) {
+      return res.status(401).json({ success: false, message: 'Invalid credentials' });
+    }
+
+    if (!agent.isActive) {
+      return res.status(403).json({ success: false, message: 'Account deactivated' });
+    }
+
+    const isValid = await bcrypt.compare(password, agent.password);
+    if (!isValid) {
+      return res.status(401).json({ success: false, message: 'Invalid credentials' });
+    }
+
+    agent.lastSeen = new Date();
+    await agent.save();
+
+    const token = jwt.sign({ agentId: agent._id, role: agent.role }, JWT_SECRET, { expiresIn: '7d' });
+
+    res.json({
+      success: true,
+      message: 'Login successful',
+      token,
+      agent: {
+        id: agent._id,
+        name: agent.fullName,
+        email: agent.email,
+        role: agent.role,
+        status: agent.status,
+        avatar: agent.avatar
+      }
+    });
+  } catch (error) {
+    console.error('Agent login error:', error);
+    res.status(500).json({ success: false, message: 'Login failed' });
+  }
+});
+
+app.get('/api/support/agent/verify', authenticateAgent, (req, res) => {
+  res.json({
+    success: true,
+    agent: {
+      id: req.agent._id,
+      name: req.agent.fullName,
+      email: req.agent.email,
+      role: req.agent.role,
+      status: req.agent.status
+    }
+  });
+});
+
+// ========== AGENT MANAGEMENT (Super Admin) ==========
+
+app.get('/api/support/admin/agents', authenticateSuperAdmin, async (req, res) => {
+  try {
+    const agents = await SupportAgent.find().select('-password').sort({ createdAt: -1 });
+    res.json({ success: true, agents });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to fetch agents' });
+  }
+});
+
+app.post('/api/support/admin/agents/create', authenticateSuperAdmin, async (req, res) => {
+  try {
+    const { fullName, email, password, department } = req.body;
+
+    if (!ALLOWED_AGENT_EMAILS.includes(email.toLowerCase())) {
+      return res.status(403).json({ success: false, message: 'Email not in allowed list' });
+    }
+
+    const existing = await SupportAgent.findOne({ email: email.toLowerCase() });
+    if (existing) {
+      return res.status(400).json({ success: false, message: 'Agent already exists' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const agent = new SupportAgent({
+      fullName,
+      email: email.toLowerCase(),
+      password: hashedPassword,
+      department,
+      role: 'agent',
+      createdBy: req.agent._id
+    });
+
+    await agent.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Agent created',
+      agent: {
+        id: agent._id,
+        name: agent.fullName,
+        email: agent.email
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Creation failed' });
+  }
+});
+
+app.put('/api/support/admin/agents/:agentId/toggle', authenticateSuperAdmin, async (req, res) => {
+  try {
+    const agent = await SupportAgent.findById(req.params.agentId);
+    if (!agent) {
+      return res.status(404).json({ success: false, message: 'Agent not found' });
+    }
+
+    if (agent.role === 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Cannot deactivate super admin' });
+    }
+
+    agent.isActive = !agent.isActive;
+    await agent.save();
+
+    res.json({
+      success: true,
+      message: agent.isActive ? 'Agent activated' : 'Agent deactivated',
+      agent: { id: agent._id, isActive: agent.isActive }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Update failed' });
+  }
+});
+
+app.delete('/api/support/admin/agents/:agentId', authenticateSuperAdmin, async (req, res) => {
+  try {
+    const agent = await SupportAgent.findById(req.params.agentId);
+    if (!agent) {
+      return res.status(404).json({ success: false, message: 'Agent not found' });
+    }
+
+    if (agent.role === 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Cannot delete super admin' });
+    }
+
+    await SupportAgent.findByIdAndDelete(req.params.agentId);
+
+    res.json({ success: true, message: 'Agent deleted' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Deletion failed' });
+  }
+});
+
+// ========== TICKET MANAGEMENT ==========
+
+app.get('/api/support/tickets', authenticateAgent, async (req, res) => {
+  try {
+    const { status, priority, assignedTo, search, limit = 50 } = req.query;
+
+    let query = {};
+    if (status && status !== 'all') query.status = status;
+    if (priority && priority !== 'all') query.priority = priority;
+    if (assignedTo && assignedTo !== 'all') query.assignedTo = assignedTo;
+    
+    if (search) {
+      query.$or = [
+        { ticketNumber: { $regex: search, $options: 'i' } },
+        { customerName: { $regex: search, $options: 'i' } },
+        { customerEmail: { $regex: search, $options: 'i' } },
+        { subject: { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    const tickets = await SupportTicket.find(query)
+      .populate('assignedTo', 'fullName email avatar')
+      .sort({ updatedAt: -1 })
+      .limit(parseInt(limit));
+
+    res.json({ success: true, tickets, count: tickets.length });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to fetch tickets' });
+  }
+});
+
+app.get('/api/support/tickets/:ticketId', authenticateAgent, async (req, res) => {
+  try {
+    const ticket = await SupportTicket.findById(req.params.ticketId)
+      .populate('assignedTo', 'fullName email avatar');
+
+    if (!ticket) {
+      return res.status(404).json({ success: false, message: 'Ticket not found' });
+    }
+
+    res.json({ success: true, ticket });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to fetch ticket' });
+  }
+});
+
+app.post('/api/support/tickets/create', async (req, res) => {
+  try {
+    const { customerName, customerEmail, subject, message, category, metadata } = req.body;
+
+    const ticketNumber = 'TKT-' + Date.now();
+
+    const ticket = new SupportTicket({
+      ticketNumber,
+      customerName,
+      customerEmail,
+      subject,
+      category: category || 'general',
+      messages: [{
+        sender: 'customer',
+        senderName: customerName,
+        message
+      }],
+      metadata: metadata || {}
+    });
+
+    await ticket.save();
+
+    // Notify all agents
+    io.emit('ticket:new', { ticket });
+
+    res.status(201).json({
+      success: true,
+      message: 'Ticket created',
+      ticket: { id: ticket._id, ticketNumber: ticket.ticketNumber }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to create ticket' });
+  }
+});
+
+app.put('/api/support/tickets/:ticketId/assign', authenticateAgent, async (req, res) => {
+  try {
+    const { assignedTo } = req.body;
+
+    const ticket = await SupportTicket.findById(req.params.ticketId);
+    if (!ticket) {
+      return res.status(404).json({ success: false, message: 'Ticket not found' });
+    }
+
+    ticket.assignedTo = assignedTo;
+    ticket.status = 'in_progress';
+    ticket.updatedAt = new Date();
+    await ticket.save();
+
+    // Update agent stats
+    if (assignedTo) {
+      await SupportAgent.findByIdAndUpdate(assignedTo, {
+        $inc: { 'stats.totalTickets': 1 }
+      });
+    }
+
+    io.emit('ticket:update', { ticketId: ticket._id, ticket });
+
+    res.json({ success: true, message: 'Ticket assigned', ticket });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Assignment failed' });
+  }
+});
+
+app.put('/api/support/tickets/:ticketId/status', authenticateAgent, async (req, res) => {
+  try {
+    const { status } = req.body;
+
+    const ticket = await SupportTicket.findById(req.params.ticketId);
+    if (!ticket) {
+      return res.status(404).json({ success: false, message: 'Ticket not found' });
+    }
+
+    ticket.status = status;
+    ticket.updatedAt = new Date();
+
+    if (status === 'resolved') {
+      ticket.resolvedAt = new Date();
+      if (ticket.assignedTo) {
+        await SupportAgent.findByIdAndUpdate(ticket.assignedTo, {
+          $inc: { 'stats.resolvedTickets': 1 }
+        });
+      }
+    } else if (status === 'closed') {
+      ticket.closedAt = new Date();
+    }
+
+    await ticket.save();
+
+    io.emit('ticket:update', { ticketId: ticket._id, ticket });
+
+    res.json({ success: true, message: 'Status updated', ticket });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Update failed' });
+  }
+});
+
+app.post('/api/support/tickets/:ticketId/reply', authenticateAgent, async (req, res) => {
+  try {
+    const { message, isInternal } = req.body;
+
+    const ticket = await SupportTicket.findById(req.params.ticketId);
+    if (!ticket) {
+      return res.status(404).json({ success: false, message: 'Ticket not found' });
+    }
+
+    ticket.messages.push({
+      sender: 'agent',
+      senderName: req.agent.fullName,
+      message,
+      isInternal: isInternal || false
+    });
+
+    if (!ticket.firstResponseAt) {
+      ticket.firstResponseAt = new Date();
+    }
+
+    ticket.updatedAt = new Date();
+    await ticket.save();
+
+    io.emit('ticket:update', { ticketId: ticket._id, ticket });
+
+    res.json({ success: true, message: 'Reply added', ticket });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Reply failed' });
+  }
+});
+
+app.post('/api/support/tickets/:ticketId/tags', authenticateAgent, async (req, res) => {
+  try {
+    const { tags } = req.body;
+
+    const ticket = await SupportTicket.findByIdAndUpdate(
+      req.params.ticketId,
+      { $set: { tags }, updatedAt: new Date() },
+      { new: true }
+    );
+
+    io.emit('ticket:update', { ticketId: ticket._id, ticket });
+
+    res.json({ success: true, message: 'Tags updated', ticket });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Update failed' });
+  }
+});
+
+app.delete('/api/support/tickets/:ticketId', authenticateSuperAdmin, async (req, res) => {
+  try {
+    await SupportTicket.findByIdAndDelete(req.params.ticketId);
+    res.json({ success: true, message: 'Ticket deleted' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Deletion failed' });
+  }
+});
+
+// Bulk actions
+app.post('/api/support/tickets/bulk-action', authenticateAgent, async (req, res) => {
+  try {
+    const { ticketIds, action, value } = req.body;
+
+    let updateData = {};
+    if (action === 'assign') updateData.assignedTo = value;
+    else if (action === 'status') updateData.status = value;
+    else if (action === 'priority') updateData.priority = value;
+
+    updateData.updatedAt = new Date();
+
+    await SupportTicket.updateMany(
+      { _id: { $in: ticketIds } },
+      { $set: updateData }
+    );
+
+    res.json({ success: true, message: `Bulk ${action} completed` });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Bulk action failed' });
+  }
+});
+
+// ========== FILE UPLOAD ==========
+app.post('/api/support/upload', authenticateAgent, upload.single('file'), (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No file uploaded' });
+    }
+
+    const fileUrl = `/uploads/${req.file.filename}`;
+
+    res.json({
+      success: true,
+      file: {
+        filename: req.file.originalname,
+        url: fileUrl,
+        size: req.file.size
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Upload failed' });
+  }
+});
+
+// ========== CANNED RESPONSES ==========
+
+app.get('/api/support/canned-responses', authenticateAgent, async (req, res) => {
+  try {
+    const responses = await CannedResponse.find().sort({ title: 1 });
+    res.json({ success: true, responses });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to fetch responses' });
+  }
+});
+
+app.post('/api/support/canned-responses', authenticateAgent, async (req, res) => {
+  try {
+    const { title, shortcut, message, category } = req.body;
+
+    const response = new CannedResponse({
+      title,
+      shortcut: shortcut.toUpperCase(),
+      message,
+      category,
+      createdBy: req.agent._id
+    });
+
+    await response.save();
+
+    res.status(201).json({ success: true, message: 'Canned response created', response });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Creation failed' });
+  }
+});
+
+app.delete('/api/support/canned-responses/:id', authenticateAgent, async (req, res) => {
+  try {
+    await CannedResponse.findByIdAndDelete(req.params.id);
+    res.json({ success: true, message: 'Canned response deleted' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Deletion failed' });
+  }
+});
+
+// ========== CHAT WIDGET API ==========
+
+app.post('/api/support/widget/session/start', async (req, res) => {
+  try {
+    const { customerName, customerEmail, metadata } = req.body;
+
+    const sessionId = 'session-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+
+    const session = new ChatSession({
+      sessionId,
+      customerName,
+      customerEmail,
+      metadata: metadata || {}
+    });
+
+    await session.save();
+
+    res.json({ success: true, sessionId });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to start session' });
+  }
+});
+
+app.get('/api/support/widget/sessions', authenticateAgent, async (req, res) => {
+  try {
+    const { status = 'active' } = req.query;
+
+    const sessions = await ChatSession.find({ status })
+      .sort({ lastMessageAt: -1 })
+      .limit(50);
+
+    res.json({ success: true, sessions });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to fetch sessions' });
+  }
+});
+
+app.get('/api/support/widget/sessions/:sessionId', async (req, res) => {
+  try {
+    const session = await ChatSession.findOne({ sessionId: req.params.sessionId });
+
+    if (!session) {
+      return res.status(404).json({ success: false, message: 'Session not found' });
+    }
+
+    res.json({ success: true, session });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to fetch session' });
+  }
+});
+
+app.post('/api/support/widget/sessions/:sessionId/convert', authenticateAgent, async (req, res) => {
+  try {
+    const session = await ChatSession.findOne({ sessionId: req.params.sessionId });
+
+    if (!session) {
+      return res.status(404).json({ success: false, message: 'Session not found' });
+    }
+
+    const ticketNumber = 'TKT-' + Date.now();
+
+    const ticket = new SupportTicket({
+      ticketNumber,
+      customerName: session.customerName,
+      customerEmail: session.customerEmail,
+      subject: 'Chat conversation',
+      messages: session.messages,
+      sessionId: session.sessionId,
+      assignedTo: req.agent._id
+    });
+
+    await ticket.save();
+
+    session.status = 'closed';
+    await session.save();
+
+    res.json({
+      success: true,
+      message: 'Converted to ticket',
+      ticket: { id: ticket._id, ticketNumber: ticket.ticketNumber }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Conversion failed' });
+  }
+});
+
+// ========== DASHBOARD STATS ==========
+
+app.get('/api/support/dashboard/stats', authenticateAgent, async (req, res) => {
+  try {
+    const totalTickets = await SupportTicket.countDocuments();
+    const openTickets = await SupportTicket.countDocuments({ status: 'open' });
+    const inProgressTickets = await SupportTicket.countDocuments({ status: 'in_progress' });
+    const resolvedTickets = await SupportTicket.countDocuments({ status: 'resolved' });
+    const activeSessions = await ChatSession.countDocuments({ status: 'active' });
+    const totalAgents = await SupportAgent.countDocuments({ isActive: true });
+    const onlineAgents = await SupportAgent.countDocuments({ status: 'online', isActive: true });
+
+    // Recent tickets
+    const recentTickets = await SupportTicket.find()
+      .populate('assignedTo', 'fullName avatar')
+      .sort({ createdAt: -1 })
+      .limit(10);
+
+    // Agent performance
+    const agentStats = await SupportAgent.find({ isActive: true })
+      .select('fullName email stats status')
+      .sort({ 'stats.resolvedTickets': -1 })
+      .limit(5);
+
+    res.json({
+      success: true,
+      stats: {
+        totalTickets,
+        openTickets,
+        inProgressTickets,
+        resolvedTickets,
+        activeSessions,
+        totalAgents,
+        onlineAgents,
+        recentTickets,
+        agentStats
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to fetch stats' });
+  }
+});
+
+// ========== AGENT STATUS UPDATE ==========
+
+app.put('/api/support/agent/status', authenticateAgent, async (req, res) => {
+  try {
+    const { status } = req.body; // online, offline, away
+
+    req.agent.status = status;
+    req.agent.lastSeen = new Date();
+    await req.agent.save();
+
+    io.emit('agent:status', { agentId: req.agent._id, status });
+
+    res.json({ success: true, message: 'Status updated', status });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Update failed' });
+  }
+});
+
+// ========== START SERVER ==========
+server.listen(PORT, () => {
+  console.log('\n╔═══════════════════════════════════════════════════════════════╗');
+  console.log('║      🎯 UYEH TECH SUPPORT SYSTEM v1.0 - LIVE               ║');
+  console.log('╚═══════════════════════════════════════════════════════════════╝\n');
+  console.log(`📡 Server: http://localhost:${PORT}`);
+  console.log(`🔌 WebSocket: Active`);
+  console.log(`📧 Admin: ${ADMIN_EMAIL}`);
+  console.log(`👥 Agents: ${ALLOWED_AGENT_EMAILS.join(', ')}\n`);
+  console.log('✅ Real-time chat enabled');
+  console.log('✅ Desktop notifications ready');
+  console.log('✅ File uploads configured\n');
+});
+
+// ========== END OF SERVER ==========
