@@ -735,32 +735,32 @@ function generateMessageId() {
 // ═════════════════════════════════════════════════════════════════════════════
 
 // Models
-User = User;
-Order = Order;
-PaymentMethod = PaymentMethod;
-Coupon = Coupon;
-Product = Product;
-Download = Download;
-Chat = Chat;
-BlogPost = BlogPost;
-SystemSettings = SystemSettings;
-Analytics = Analytics;
+global.User = User;
+global.Order = Order;
+global.PaymentMethod = PaymentMethod;
+global.Coupon = Coupon;
+global.Product = Product;
+global.Download = Download;
+global.Chat = Chat;
+global.BlogPost = BlogPost;
+global.SystemSettings = SystemSettings;
+global.Analytics = Analytics;
 
 // WebSocket functions
-broadcastToChat = broadcastToChat;
-sendToAgent = sendToAgent;
-sendToCustomer = sendToCustomer;
-activeConnections = activeConnections;
-agentConnections = agentConnections;
-customerConnections = customerConnections;
+global.broadcastToChat = broadcastToChat;
+global.sendToAgent = sendToAgent;
+global.sendToCustomer = sendToCustomer;
+global.activeConnections = activeConnections;
+global.agentConnections = agentConnections;
+global.customerConnections = customerConnections;
 
 // Utility functions
-generateToken = generateToken;
-generateOTP = generateOTP;
-generateSlug = generateSlug;
-generateChatId = generateChatId;
-generateMessageId = generateMessageId;
-otpStore = otpStore;
+global.generateToken = generateToken;
+global.generateOTP = generateOTP;
+global.generateSlug = generateSlug;
+global.generateChatId = generateChatId;
+global.generateMessageId = generateMessageId;
+global.otpStore = otpStore;
 
 // Configuration
 global.JWT_SECRET = JWT_SECRET;
@@ -771,6 +771,11 @@ global.TERMII_SENDER_EMAIL = TERMII_SENDER_EMAIL;
 global.FLUTTERWAVE_SECRET_KEY = FLUTTERWAVE_SECRET_KEY;
 global.ADMIN_EMAIL = ADMIN_EMAIL;
 global.BASE_URL = BASE_URL;
+
+// Express app and server
+global.app = app;
+global.server = server;
+global.upload = upload;
 
 
 
