@@ -1,10 +1,22 @@
-// ════════════════════════════════════════════════════════════════════════════
-// 🚀 UYEH TECH BACKEND SERVER v7.0 - PART 1 OF 8
-// ════════════════════════════════════════════════════════════════════════════
-// 📦 Core Setup, Dependencies & Environment Configuration
-// 🔧 ALL FIXES APPLIED - Production Ready
-// 👨‍💼 Admin Email: uyehtech@gmail.com
-// ════════════════════════════════════════════════════════════════════════════
+// ╔═══════════════════════════════════════════════════════════════════════════╗
+// ║                    UYEH TECH BACKEND SERVER v7.0                         ║
+// ║                          PART 1 OF 7                                      ║
+// ║          Setup, Configuration, Schemas & WebSocket Init                   ║
+// ╚═══════════════════════════════════════════════════════════════════════════╝
+//
+// 🎯 NEW IN v7.0:
+// ✅ Real-time WebSocket Support for Customer Chat
+// ✅ Support Ticket System with Agent Assignment
+// ✅ File Upload Support (Images, PDFs, Documents)
+// ✅ Agent Dashboard Integration
+// ✅ Customer Chat Widget Integration
+// ✅ Enhanced Error Handling & Logging
+// ✅ Complete API for All Frontend Features
+//
+// 📧 Admin Email: uyehtech@gmail.com
+// 🔐 Auto-grants admin privileges to this email
+//
+// ═════════════════════════════════════════════════════════════════════════════
 
 const express = require('express');
 const mongoose = require('mongoose');
@@ -23,239 +35,25 @@ require('dotenv').config();
 const app = express();
 const server = http.createServer(app);
 
-// ════════════════════════════════════════════════════════════════════════════
-// 🌍 ENVIRONMENT CONFIGURATION
-// ════════════════════════════════════════════════════════════════════════════
-
-const MONGO_URI = process.env.MONGO_URI;
-const JWT_SECRET = process.env.JWT_SECRET || 'default-jwt-secret-change-in-production';
-const TERMII_API_KEY = process.env.TERMII_API_KEY;
-const TERMII_EMAIL_CONFIG_ID = '4de5e6c7-415f-43f1-812a-0bbbb213c126';
-const TERMII_BASE_URL = 'https://v3.api.termii.com';
-const TERMII_SENDER_EMAIL = process.env.TERMII_SENDER_EMAIL || 'noreply@uyehtech.com';
-const FLUTTERWAVE_SECRET_KEY = process.env.FLUTTERWAVE_SECRET_KEY;
-const ADMIN_EMAIL = 'uyehtech@gmail.com';
-const PORT = process.env.PORT || 3000;
-const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
-
-// ════════════════════════════════════════════════════════════════════════════
-// 🎨 STARTUP BANNER
-// ════════════════════════════════════════════════════════════════════════════
-
-console.log('\n╔═══════════════════════════════════════════════════════════════════════════╗');
-console.log('║              🚀 UYEH TECH SERVER v7.0 - INITIALIZING                    ║');
-console.log('║                    🔧 ALL FIXES APPLIED ✅                                ║');
-console.log('╚═══════════════════════════════════════════════════════════════════════════╝\n');
-
-console.log('📋 Configuration Status:');
-console.log('  ├─ MongoDB:', MONGO_URI ? '✅ Configured' : '❌ Missing (REQUIRED)');
-console.log('  ├─ JWT Secret:', JWT_SECRET !== 'default-jwt-secret-change-in-production' ? '✅ Configured' : '⚠️  Using Default');
-console.log('  ├─ Termii API:', TERMII_API_KEY ? '✅ Configured' : '⚠️  Missing (Email disabled)');
-console.log('  ├─ Flutterwave:', FLUTTERWAVE_SECRET_KEY ? '✅ Configured' : '⚠️  Missing (Payments disabled)');
-console.log('  └─ Admin Email:', ADMIN_EMAIL, '\n');
-
-console.log('🔧 CRITICAL FIXES APPLIED:');
-console.log('  ✅ Login response returns fullName + name fields');
-console.log('  ✅ Login response includes emailVerified status');
-console.log('  ✅ Agent self-assignment enabled for online agents');
-console.log('  ✅ Consistent user object structure across all endpoints');
-console.log('  ✅ Enhanced error handling and validation');
-console.log('  ✅ Frontend-backend compatibility ensured\n');
-
-// ════════════════════════════════════════════════════════════════════════════
-// 🔗 MIDDLEWARE CONFIGURATION
-// ════════════════════════════════════════════════════════════════════════════
-
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  credentials: true
-}));
-
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-
-// Static files for uploads
-const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-  console.log('📁 Created uploads directory');
-}
-
-app.use('/uploads', express.static(uploadsDir));
-
-// Request logging middleware
-app.use((req, res, next) => {
-  const timestamp = new Date().toISOString();
-  console.log(`[${timestamp}] ${req.method} ${req.path}`);
-  next();
-});
-
-// ════════════════════════════════════════════════════════════════════════════
-// 📤 MULTER FILE UPLOAD CONFIGURATION
-// ════════════════════════════════════════════════════════════════════════════
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadsDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const sanitizedFilename = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
-    cb(null, uniqueSuffix + '-' + sanitizedFilename);
-  }
-});
-
-const fileFilter = (req, file, cb) => {
-  const allowedMimes = [
-    'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
-    'application/pdf',
-    'application/msword',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'text/plain'
-  ];
-  
-  if (allowedMimes.includes(file.mimetype)) {
-    cb(null, true);
-  } else {
-    cb(new Error('Invalid file type. Only images, PDFs, and documents allowed.'), false);
-  }
-};
-
-const upload = multer({
-  storage: storage,
-  limits: { 
-    fileSize: 10 * 1024 * 1024, // 10MB
-    files: 5
-  },
-  fileFilter: fileFilter
-});
-
-// ════════════════════════════════════════════════════════════════════════════
-// 🗄️ MONGODB CONNECTION
-// ════════════════════════════════════════════════════════════════════════════
-
-if (!MONGO_URI) {
-  console.error('❌ FATAL: MONGO_URI not configured in .env file');
-  console.log('📝 Please add MONGO_URI to your .env file');
-  process.exit(1);
-}
-
-mongoose.connect(MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-})
-  .then(() => {
-    console.log('✅ MongoDB Connected Successfully');
-    console.log(`   Database: ${mongoose.connection.name}`);
-  })
-  .catch(err => {
-    console.error('❌ MongoDB Connection Error:', err.message);
-    process.exit(1);
-  });
-
-mongoose.connection.on('disconnected', () => {
-  console.warn('⚠️  MongoDB Disconnected');
-});
-
-mongoose.connection.on('reconnected', () => {
-  console.log('✅ MongoDB Reconnected');
-});
-
-mongoose.connection.on('error', (err) => {
-  console.error('❌ MongoDB error:', err);
-});
-
-// ════════════════════════════════════════════════════════════════════════════
-// 🔧 UTILITY FUNCTIONS
-// ════════════════════════════════════════════════════════════════════════════
-
-function generateToken() {
-  return crypto.randomBytes(32).toString('hex');
-}
-
-function generateOTP() {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-}
-
-function generateSlug(text) {
-  return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-}
-
-function generateChatId() {
-  return 'CHAT-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9).toUpperCase();
-}
-
-function generateMessageId() {
-  return 'MSG-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9).toUpperCase();
-}
-
-// Email OTP storage
-const otpStore = new Map();
-
-// ════════════════════════════════════════════════════════════════════════════
-// 📤 EXPORT CONFIGURATION
-// ════════════════════════════════════════════════════════════════════════════
-
-global.app = app;
-global.server = server;
-global.upload = upload;
-global.otpStore = otpStore;
-
-global.JWT_SECRET = JWT_SECRET;
-global.TERMII_API_KEY = TERMII_API_KEY;
-global.TERMII_EMAIL_CONFIG_ID = TERMII_EMAIL_CONFIG_ID;
-global.TERMII_BASE_URL = TERMII_BASE_URL;
-global.TERMII_SENDER_EMAIL = TERMII_SENDER_EMAIL;
-global.FLUTTERWAVE_SECRET_KEY = FLUTTERWAVE_SECRET_KEY;
-global.ADMIN_EMAIL = ADMIN_EMAIL;
-global.BASE_URL = BASE_URL;
-
-global.generateToken = generateToken;
-global.generateOTP = generateOTP;
-global.generateSlug = generateSlug;
-global.generateChatId = generateChatId;
-global.generateMessageId = generateMessageId;
-
-console.log('✅ Part 1/8 Loaded: Core Setup & Dependencies Ready');
-console.log('📦 Express, MongoDB, Multer, Utilities Configured\n');
-
-// ════════════════════════════════════════════════════════════════════════════
-// END OF PART 1 - Continue to Part 2 for WebSocket & Database Schemas
-// ════════════════════════════════════════════════════════════════════════════// ════════════════════════════════════════════════════════════════════════════
-// 🚀 UYEH TECH BACKEND SERVER v7.0 - PART 2 OF 8
-// ════════════════════════════════════════════════════════════════════════════
-// 🔌 WebSocket Setup & Real-time Chat System
-// COPY THIS AFTER PART 1
-// ════════════════════════════════════════════════════════════════════════════
-
-const WebSocket = require('ws');
-
-// ════════════════════════════════════════════════════════════════════════════
-// 🔌 WEBSOCKET SERVER INITIALIZATION
-// ════════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════════
+// WEBSOCKET SETUP FOR REAL-TIME CHAT
+// ═════════════════════════════════════════════════════════════════════════════
 
 const wss = new WebSocket.Server({ 
-  server: global.server,
+  server,
   path: '/ws',
   verifyClient: (info) => {
-    return true; // Allow all connections, auth handled in message handler
+    // Allow all connections - authentication handled in message handler
+    return true;
   }
 });
 
-// ════════════════════════════════════════════════════════════════════════════
-// 💾 ACTIVE CONNECTION STORAGE
-// ════════════════════════════════════════════════════════════════════════════
-
+// Store active WebSocket connections
 const activeConnections = new Map(); // chatId -> Set of WebSocket connections
 const agentConnections = new Map();  // agentId -> WebSocket connection
 const customerConnections = new Map(); // customerId -> WebSocket connection
 
-// ════════════════════════════════════════════════════════════════════════════
-// 🔗 WEBSOCKET CONNECTION HANDLER
-// ════════════════════════════════════════════════════════════════════════════
-
+// WebSocket connection handler
 wss.on('connection', (ws, req) => {
   const urlParams = new URLSearchParams(req.url.split('?')[1]);
   const chatId = urlParams.get('chatId');
@@ -267,7 +65,7 @@ wss.on('connection', (ws, req) => {
   console.log(`   Agent ID: ${agentId || 'N/A'}`);
   console.log(`   Customer ID: ${customerId || 'N/A'}`);
   
-  // Store connections by type
+  // Store connection
   if (chatId) {
     if (!activeConnections.has(chatId)) {
       activeConnections.set(chatId, new Set());
@@ -295,7 +93,7 @@ wss.on('connection', (ws, req) => {
     timestamp: new Date().toISOString()
   }));
   
-  // Handle pong responses
+  // Handle pong
   ws.on('pong', () => {
     ws.isAlive = true;
   });
@@ -305,6 +103,8 @@ wss.on('connection', (ws, req) => {
     try {
       const data = JSON.parse(message);
       console.log(`📨 WebSocket Message:`, data.type);
+      
+      // Handle different message types
       handleWebSocketMessage(ws, data);
     } catch (error) {
       console.error('❌ WebSocket message error:', error);
@@ -342,10 +142,7 @@ wss.on('connection', (ws, req) => {
   });
 });
 
-// ════════════════════════════════════════════════════════════════════════════
-// 💓 HEARTBEAT TO KEEP CONNECTIONS ALIVE
-// ════════════════════════════════════════════════════════════════════════════
-
+// Heartbeat to keep connections alive
 const heartbeatInterval = setInterval(() => {
   wss.clients.forEach((ws) => {
     if (ws.isAlive === false) {
@@ -360,10 +157,7 @@ wss.on('close', () => {
   clearInterval(heartbeatInterval);
 });
 
-// ════════════════════════════════════════════════════════════════════════════
-// 📡 WEBSOCKET BROADCAST FUNCTIONS
-// ════════════════════════════════════════════════════════════════════════════
-
+// Helper function to broadcast to chat
 function broadcastToChat(chatId, message, excludeWs = null) {
   if (activeConnections.has(chatId)) {
     const connections = activeConnections.get(chatId);
@@ -375,6 +169,7 @@ function broadcastToChat(chatId, message, excludeWs = null) {
   }
 }
 
+// Helper function to send to specific agent
 function sendToAgent(agentId, message) {
   const agentWs = agentConnections.get(agentId);
   if (agentWs && agentWs.readyState === WebSocket.OPEN) {
@@ -382,6 +177,7 @@ function sendToAgent(agentId, message) {
   }
 }
 
+// Helper function to send to specific customer
 function sendToCustomer(customerId, message) {
   const customerWs = customerConnections.get(customerId);
   if (customerWs && customerWs.readyState === WebSocket.OPEN) {
@@ -389,19 +185,12 @@ function sendToCustomer(customerId, message) {
   }
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// 📨 WEBSOCKET MESSAGE HANDLER
-// ════════════════════════════════════════════════════════════════════════════
-
+// Handle WebSocket messages
 function handleWebSocketMessage(ws, data) {
   switch (data.type) {
     case 'ping':
-      ws.send(JSON.stringify({ 
-        type: 'pong', 
-        timestamp: new Date().toISOString() 
-      }));
+      ws.send(JSON.stringify({ type: 'pong', timestamp: new Date().toISOString() }));
       break;
-      
     case 'typing':
       if (ws.chatId) {
         broadcastToChat(ws.chatId, {
@@ -411,43 +200,159 @@ function handleWebSocketMessage(ws, data) {
         }, ws);
       }
       break;
-      
     default:
       console.log(`⚠️ Unhandled message type: ${data.type}`);
   }
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// 📤 EXPORT WEBSOCKET FUNCTIONS
-// ════════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════════
+// MIDDLEWARE CONFIGURATION
+// ═════════════════════════════════════════════════════════════════════════════
 
-global.wss = wss;
-global.broadcastToChat = broadcastToChat;
-global.sendToAgent = sendToAgent;
-global.sendToCustomer = sendToCustomer;
-global.activeConnections = activeConnections;
-global.agentConnections = agentConnections;
-global.customerConnections = customerConnections;
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  credentials: true
+}));
 
-console.log('✅ Part 2/8 Loaded: WebSocket & Real-time Chat Ready');
-console.log('🔌 WebSocket Server: ws://localhost:' + (process.env.PORT || 3000) + '/ws');
-console.log('💬 Active Connections: 0 chats, 0 agents, 0 customers\n');
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// ════════════════════════════════════════════════════════════════════════════
-// END OF PART 2 - Continue to Part 3 for Database Schemas
-// ════════════════════════════════════════════════════════════════════════════// ════════════════════════════════════════════════════════════════════════════
-// 🚀 UYEH TECH BACKEND SERVER v7.0 - PART 3 OF 8
-// ════════════════════════════════════════════════════════════════════════════
-// 🗄️ Database Schemas (MongoDB Models)
-// COPY THIS AFTER PART 2
-// ════════════════════════════════════════════════════════════════════════════
+// Static files for uploads
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+  console.log('📁 Created uploads directory');
+}
 
-const mongoose = require('mongoose');
+app.use('/uploads', express.static(uploadsDir));
 
-// ════════════════════════════════════════════════════════════════════════════
-// 👤 USER SCHEMA
-// ════════════════════════════════════════════════════════════════════════════
+// Request logging middleware
+app.use((req, res, next) => {
+  const timestamp = new Date().toISOString();
+  console.log(`\n[${timestamp}] ${req.method} ${req.path}`);
+  next();
+});
 
+// ═════════════════════════════════════════════════════════════════════════════
+// MULTER CONFIGURATION FOR FILE UPLOADS
+// ═════════════════════════════════════════════════════════════════════════════
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadsDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const sanitizedFilename = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+    cb(null, uniqueSuffix + '-' + sanitizedFilename);
+  }
+});
+
+const fileFilter = (req, file, cb) => {
+  const allowedMimes = [
+    'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'text/plain'
+  ];
+  
+  if (allowedMimes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Invalid file type. Only images, PDFs, and documents are allowed.'), false);
+  }
+};
+
+const upload = multer({
+  storage: storage,
+  limits: { 
+    fileSize: 10 * 1024 * 1024, // 10MB limit
+    files: 5 // Maximum 5 files per request
+  },
+  fileFilter: fileFilter
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ENVIRONMENT CONFIGURATION
+// ═════════════════════════════════════════════════════════════════════════════
+
+const MONGO_URI = process.env.MONGO_URI;
+const JWT_SECRET = process.env.JWT_SECRET || 'default-jwt-secret-change-in-production';
+const TERMII_API_KEY = process.env.TERMII_API_KEY;
+const TERMII_EMAIL_CONFIG_ID = '4de5e6c7-415f-43f1-812a-0bbbb213c126';
+const TERMII_BASE_URL = 'https://v3.api.termii.com';
+const TERMII_SENDER_EMAIL = process.env.TERMII_SENDER_EMAIL || 'noreply@uyehtech.com';
+const FLUTTERWAVE_SECRET_KEY = process.env.FLUTTERWAVE_SECRET_KEY;
+const ADMIN_EMAIL = 'uyehtech@gmail.com';
+const PORT = process.env.PORT || 3000;
+const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
+
+// ═════════════════════════════════════════════════════════════════════════════
+// STARTUP VALIDATION & BANNER
+// ═════════════════════════════════════════════════════════════════════════════
+
+console.log('\n╔═══════════════════════════════════════════════════════════════════════════╗');
+console.log('║              🚀 UYEH TECH SERVER v7.0 - INITIALIZING                    ║');
+console.log('╚═══════════════════════════════════════════════════════════════════════════╝\n');
+
+console.log('📋 Configuration Status:');
+console.log('  ├─ MongoDB:', MONGO_URI ? '✅ Configured' : '❌ Missing (REQUIRED)');
+console.log('  ├─ JWT Secret:', JWT_SECRET !== 'default-jwt-secret-change-in-production' ? '✅ Configured' : '⚠️  Using Default (Change in Production)');
+console.log('  ├─ Termii API:', TERMII_API_KEY ? '✅ Configured' : '⚠️  Missing (Email disabled)');
+console.log('  ├─ Flutterwave:', FLUTTERWAVE_SECRET_KEY ? '✅ Configured' : '⚠️  Missing (Payments disabled)');
+console.log('  └─ Admin Email:', ADMIN_EMAIL, '\n');
+
+console.log('🎉 NEW FEATURES IN v7.0:');
+console.log('  ✨ Real-time Customer Chat with WebSocket');
+console.log('  ✨ Support Ticket System');
+console.log('  ✨ Agent Dashboard with Live Chat');
+console.log('  ✨ File Upload Support (Images, PDFs, Docs)');
+console.log('  ✨ Complete Frontend Integration');
+console.log('  ✨ Enhanced Error Handling & Logging\n');
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CONNECT TO MONGODB
+// ═════════════════════════════════════════════════════════════════════════════
+
+if (!MONGO_URI) {
+  console.error('❌ FATAL: MONGO_URI not configured in .env file');
+  console.log('📝 Please add MONGO_URI to your .env file');
+  process.exit(1);
+}
+
+mongoose.connect(MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+})
+  .then(() => {
+    console.log('✅ MongoDB Connected Successfully');
+    console.log(`   Database: ${mongoose.connection.name}`);
+  })
+  .catch(err => {
+    console.error('❌ MongoDB Connection Error:', err.message);
+    process.exit(1);
+  });
+
+// MongoDB connection event handlers
+mongoose.connection.on('disconnected', () => {
+  console.warn('⚠️  MongoDB Disconnected');
+});
+
+mongoose.connection.on('reconnected', () => {
+  console.log('✅ MongoDB Reconnected');
+});
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// DATABASE SCHEMAS
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ──────────────────────────────────────────────────────────────────────────────
+// USER SCHEMA
+// ──────────────────────────────────────────────────────────────────────────────
 const userSchema = new mongoose.Schema({
   fullName: { type: String, required: true, trim: true },
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
@@ -502,10 +407,9 @@ userSchema.index({ createdAt: -1 });
 
 const User = mongoose.model('User', userSchema);
 
-// ════════════════════════════════════════════════════════════════════════════
-// 📦 ORDER SCHEMA
-// ════════════════════════════════════════════════════════════════════════════
 
+
+// ========== ORDER SCHEMA ==========
 const orderSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   orderReference: { type: String, required: true, unique: true },
@@ -546,10 +450,7 @@ orderSchema.pre('save', function(next) {
 
 const Order = mongoose.model('Order', orderSchema);
 
-// ════════════════════════════════════════════════════════════════════════════
-// 💳 PAYMENT METHOD SCHEMA
-// ════════════════════════════════════════════════════════════════════════════
-
+// ========== PAYMENT METHOD SCHEMA ==========
 const paymentMethodSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   type: { type: String, required: true, enum: ['Visa', 'Mastercard', 'American Express', 'Discover', 'Credit Card'] },
@@ -562,10 +463,7 @@ const paymentMethodSchema = new mongoose.Schema({
 
 const PaymentMethod = mongoose.model('PaymentMethod', paymentMethodSchema);
 
-// ════════════════════════════════════════════════════════════════════════════
-// 🎫 COUPON SCHEMA
-// ════════════════════════════════════════════════════════════════════════════
-
+// ========== COUPON SCHEMA ==========
 const couponSchema = new mongoose.Schema({
   code: { type: String, required: true, unique: true, uppercase: true, trim: true },
   discount: { type: Number, required: true, min: 0 },
@@ -583,10 +481,7 @@ couponSchema.index({ code: 1 });
 
 const Coupon = mongoose.model('Coupon', couponSchema);
 
-// ════════════════════════════════════════════════════════════════════════════
-// 🛍️ PRODUCT SCHEMA
-// ════════════════════════════════════════════════════════════════════════════
-
+// ========== PRODUCT SCHEMA (WITH DOWNLOAD LINKS) ==========
 const productSchema = new mongoose.Schema({
   title: { type: String, required: true, trim: true },
   description: { type: String, required: true },
@@ -597,7 +492,7 @@ const productSchema = new mongoose.Schema({
   image: String,
   images: [String],
   features: [String],
-  downloadLink: { type: String, default: '' },
+  downloadLink: { type: String, default: '' }, // DOWNLOAD LINK FIELD
   fileSize: String,
   version: String,
   requirements: [String],
@@ -622,10 +517,7 @@ productSchema.pre('save', function(next) {
 
 const Product = mongoose.model('Product', productSchema);
 
-// ════════════════════════════════════════════════════════════════════════════
-// 📥 DOWNLOAD TRACKING SCHEMA
-// ════════════════════════════════════════════════════════════════════════════
-
+// ========== DOWNLOAD TRACKING SCHEMA (NEW) ==========
 const downloadSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
@@ -640,10 +532,7 @@ downloadSchema.index({ downloadedAt: -1 });
 
 const Download = mongoose.model('Download', downloadSchema);
 
-// ════════════════════════════════════════════════════════════════════════════
-// 📝 BLOG POST SCHEMA
-// ════════════════════════════════════════════════════════════════════════════
-
+// ========== BLOG POST SCHEMA ==========
 const blogPostSchema = new mongoose.Schema({
   title: { type: String, required: true, trim: true },
   slug: { type: String, required: true, unique: true, lowercase: true, trim: true },
@@ -680,7 +569,7 @@ blogPostSchema.index({ publishedAt: -1 });
 blogPostSchema.pre('save', function(next) {
   this.updatedAt = Date.now();
   if (!this.slug && this.title) {
-    this.slug = global.generateSlug(this.title);
+    this.slug = this.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   }
   if (this.status === 'published' && !this.publishedAt) {
     this.publishedAt = Date.now();
@@ -690,9 +579,9 @@ blogPostSchema.pre('save', function(next) {
 
 const BlogPost = mongoose.model('BlogPost', blogPostSchema);
 
-// ════════════════════════════════════════════════════════════════════════════
-// 💬 CHAT/SUPPORT TICKET SCHEMA
-// ════════════════════════════════════════════════════════════════════════════
+// ──────────────────────────────────────────────────────────────────────────────
+// CHAT/SUPPORT TICKET SCHEMA (NEW)
+// ──────────────────────────────────────────────────────────────────────────────
 
 const chatSchema = new mongoose.Schema({
   chatId: { type: String, required: true, unique: true },
@@ -726,8 +615,8 @@ const chatSchema = new mongoose.Schema({
   updatedAt: { type: Date, default: Date.now },
   closedAt: Date,
   resolvedAt: Date,
-  firstResponseTime: Number,
-  averageResponseTime: Number,
+  firstResponseTime: Number, // Time in minutes
+  averageResponseTime: Number, // Time in minutes
   totalMessages: { type: Number, default: 0 }
 });
 
@@ -747,10 +636,7 @@ chatSchema.index({ createdAt: -1 });
 
 const Chat = mongoose.model('Chat', chatSchema);
 
-// ════════════════════════════════════════════════════════════════════════════
-// ⚙️ SYSTEM SETTINGS SCHEMA
-// ════════════════════════════════════════════════════════════════════════════
-
+// ========== SYSTEM SETTINGS SCHEMA ==========
 const systemSettingsSchema = new mongoose.Schema({
   siteName: { type: String, default: 'UYEH TECH' },
   siteDescription: String,
@@ -789,10 +675,9 @@ const systemSettingsSchema = new mongoose.Schema({
 });
 
 const SystemSettings = mongoose.model('SystemSettings', systemSettingsSchema);
-
-// ════════════════════════════════════════════════════════════════════════════
-// 📊 ANALYTICS SCHEMA
-// ════════════════════════════════════════════════════════════════════════════
+// ──────────────────────────────────────────────────────────────────────────────
+// ANALYTICS SCHEMA
+// ──────────────────────────────────────────────────────────────────────────────
 
 const analyticsSchema = new mongoose.Schema({
   date: { type: Date, required: true, index: true },
@@ -802,8 +687,8 @@ const analyticsSchema = new mongoose.Schema({
   orders: { type: Number, default: 0 },
   revenue: { type: Number, default: 0 },
   downloads: { type: Number, default: 0 },
-  chatsStarted: { type: Number, default: 0 },
-  chatsResolved: { type: Number, default: 0 },
+  chatsStarted: { type: Number, default: 0 }, // NEW
+  chatsResolved: { type: Number, default: 0 }, // NEW
   topProducts: [{
     productId: String,
     productName: String,
@@ -820,10 +705,36 @@ analyticsSchema.index({ date: -1 });
 
 const Analytics = mongoose.model('Analytics', analyticsSchema);
 
-// ════════════════════════════════════════════════════════════════════════════
-// 📤 EXPORT ALL MODELS
-// ════════════════════════════════════════════════════════════════════════════
 
+// ========== EMAIL OTP STORAGE ==========
+const otpStore = new Map();
+
+// ========== UTILITY FUNCTIONS ==========
+function generateToken() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+function generateOTP() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+function generateSlug(text) {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+function generateChatId() {
+  return 'CHAT-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9).toUpperCase();
+}
+
+function generateMessageId() {
+  return 'MSG-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9).toUpperCase();
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// EXPORT FOR USE IN OTHER PARTS
+// ═════════════════════════════════════════════════════════════════════════════
+
+// Models
 global.User = User;
 global.Order = Order;
 global.PaymentMethod = PaymentMethod;
@@ -835,31 +746,51 @@ global.BlogPost = BlogPost;
 global.SystemSettings = SystemSettings;
 global.Analytics = Analytics;
 
-console.log('✅ Part 3/8 Loaded: Database Schemas Ready');
-console.log('📦 Models: User, Order, Product, Coupon, Chat, Blog, Analytics, Settings\n');
+// WebSocket functions
+global.broadcastToChat = broadcastToChat;
+global.sendToAgent = sendToAgent;
+global.sendToCustomer = sendToCustomer;
+global.activeConnections = activeConnections;
+global.agentConnections = agentConnections;
+global.customerConnections = customerConnections;
 
-// ════════════════════════════════════════════════════════════════════════════
-// END OF PART 3 - Continue to Part 4 for Email Functions & Middleware
-// ════════════════════════════════════════════════════════════════════════════// ════════════════════════════════════════════════════════════════════════════
-// 🚀 UYEH TECH BACKEND SERVER v7.0 - PART 4 OF 8
-// ════════════════════════════════════════════════════════════════════════════
-// 📧 Email Functions & Authentication Middleware
-// COPY THIS AFTER PART 3
-// ════════════════════════════════════════════════════════════════════════════
+// Utility functions
+global.generateToken = generateToken;
+global.generateOTP = generateOTP;
+global.generateSlug = generateSlug;
+global.generateChatId = generateChatId;
+global.generateMessageId = generateMessageId;
+global.otpStore = otpStore;
 
-const axios = require('axios');
-const jwt = require('jsonwebtoken');
+// Configuration
+global.JWT_SECRET = JWT_SECRET;
+global.TERMII_API_KEY = TERMII_API_KEY;
+global.TERMII_EMAIL_CONFIG_ID = TERMII_EMAIL_CONFIG_ID;
+global.TERMII_BASE_URL = TERMII_BASE_URL;
+global.TERMII_SENDER_EMAIL = TERMII_SENDER_EMAIL;
+global.FLUTTERWAVE_SECRET_KEY = FLUTTERWAVE_SECRET_KEY;
+global.ADMIN_EMAIL = ADMIN_EMAIL;
+global.BASE_URL = BASE_URL;
 
-// ════════════════════════════════════════════════════════════════════════════
-// 📧 EMAIL FUNCTIONS
-// ════════════════════════════════════════════════════════════════════════════
+// Express app and server
+global.app = app;
+global.server = server;
+global.upload = upload;
 
+
+console.log('\n✅ Part 1 Loaded: Schemas, Configuration & WebSocket Ready');
+console.log('📦 Models: User, Order, Coupon, Product, Download, Chat, Blog, Analytics, Settings');
+console.log('🔌 WebSocket: Ready for real-time chat connections\n');
+
+//PART TWO
+
+// ========== SEND EMAIL WITH OTP ==========
 async function sendEmailOTP(to, otp, purpose = 'verification') {
   try {
     console.log(`\n📧 Sending ${purpose} OTP to ${to}`);
     console.log(`🔑 OTP Code: ${otp}`);
    
-    if (!global.TERMII_API_KEY) {
+    if (!TERMII_API_KEY) {
       console.error('❌ TERMII_API_KEY not configured');
       console.log(`📧 OTP for ${to}: ${otp}`);
       return { success: true, method: 'console_log', otp };
@@ -877,15 +808,15 @@ async function sendEmailOTP(to, otp, purpose = 'verification') {
 
     try {
       const termiiPayload = {
-        api_key: global.TERMII_API_KEY,
+        api_key: TERMII_API_KEY,
         to: to,
-        from: global.TERMII_SENDER_EMAIL,
+        from: TERMII_SENDER_EMAIL,
         subject: subject,
         body: emailBody,
-        email_configuration_id: global.TERMII_EMAIL_CONFIG_ID
+        email_configuration_id: TERMII_EMAIL_CONFIG_ID
       };
 
-      const response = await axios.post(`${global.TERMII_BASE_URL}/api/send-mail`, termiiPayload, {
+      const response = await axios.post(`${TERMII_BASE_URL}/api/send-mail`, termiiPayload, {
         headers: { 'Content-Type': 'application/json' },
         timeout: 15000
       });
@@ -906,9 +837,10 @@ async function sendEmailOTP(to, otp, purpose = 'verification') {
   }
 }
 
+// ========== SEND ORDER CONFIRMATION WITH DOWNLOAD LINKS ==========
 async function sendOrderConfirmationEmail(to, orderData) {
   try {
-    if (!global.TERMII_API_KEY) {
+    if (!TERMII_API_KEY) {
       console.log(`📧 Order confirmation for ${to}: ${orderData.orderReference}`);
       return { success: true, method: 'console_log' };
     }
@@ -930,13 +862,13 @@ UYEH TECH Team
     `.trim();
 
     try {
-      await axios.post(`${global.TERMII_BASE_URL}/api/send-mail`, {
-        api_key: global.TERMII_API_KEY,
+      await axios.post(`${TERMII_BASE_URL}/api/send-mail`, {
+        api_key: TERMII_API_KEY,
         to: to,
-        from: global.TERMII_SENDER_EMAIL,
+        from: TERMII_SENDER_EMAIL,
         subject: subject,
         body: emailBody,
-        email_configuration_id: global.TERMII_EMAIL_CONFIG_ID
+        email_configuration_id: TERMII_EMAIL_CONFIG_ID
       }, {
         headers: { 'Content-Type': 'application/json' },
         timeout: 15000
@@ -956,10 +888,12 @@ UYEH TECH Team
   }
 }
 
+
+// Send Chat Assignment Notification to Agent
 async function sendAgentAssignmentEmail(agentEmail, chatInfo) {
   try {
-    if (!global.TERMII_API_KEY) {
-      console.log(`📧 Agent assignment notification: ${chatInfo.chatId}`);
+    if (!TERMII_API_KEY) {
+      console.log(`📧 Agent assignment notification: ${chatInfo.chatId} (Email service disabled)`);
       return { success: true, method: 'console_log' };
     }
    
@@ -982,13 +916,13 @@ UYEH TECH Support System
     `.trim();
 
     try {
-      await axios.post(`${global.TERMII_BASE_URL}/api/send-mail`, {
-        api_key: global.TERMII_API_KEY,
+      await axios.post(`${TERMII_BASE_URL}/api/send-mail`, {
+        api_key: TERMII_API_KEY,
         to: agentEmail,
-        from: global.TERMII_SENDER_EMAIL,
+        from: TERMII_SENDER_EMAIL,
         subject: subject,
         body: emailBody,
-        email_configuration_id: global.TERMII_EMAIL_CONFIG_ID
+        email_configuration_id: TERMII_EMAIL_CONFIG_ID
       }, {
         headers: { 'Content-Type': 'application/json' },
         timeout: 15000
@@ -1008,10 +942,13 @@ UYEH TECH Support System
   }
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// 🔐 AUTHENTICATION MIDDLEWARE
-// ════════════════════════════════════════════════════════════════════════════
+// Export email functions
+global.sendEmailOTP = sendEmailOTP;
+global.sendOrderConfirmationEmail = sendOrderConfirmationEmail;
+global.sendAgentAssignmentEmail = sendAgentAssignmentEmail;
 
+
+// ========== MIDDLEWARE: AUTHENTICATE TOKEN ==========
 function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -1020,7 +957,7 @@ function authenticateToken(req, res, next) {
     return res.status(401).json({ success: false, message: 'Access token required' });
   }
 
-  jwt.verify(token, global.JWT_SECRET, (err, user) => {
+  jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) {
       return res.status(403).json({ success: false, message: 'Invalid token' });
     }
@@ -1029,6 +966,7 @@ function authenticateToken(req, res, next) {
   });
 }
 
+// ========== MIDDLEWARE: AUTHENTICATE ADMIN ==========
 async function authenticateAdmin(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -1037,13 +975,13 @@ async function authenticateAdmin(req, res, next) {
     return res.status(401).json({ success: false, message: 'Token required' });
   }
 
-  jwt.verify(token, global.JWT_SECRET, async (err, decoded) => {
+  jwt.verify(token, JWT_SECRET, async (err, decoded) => {
     if (err) {
       return res.status(403).json({ success: false, message: 'Invalid token' });
     }
 
     try {
-      const user = await global.User.findById(decoded.userId);
+      const user = await User.findById(decoded.userId);
       
       if (!user || !user.isAdmin) {
         return res.status(403).json({ 
@@ -1061,7 +999,7 @@ async function authenticateAdmin(req, res, next) {
     }
   });
 }
-
+// Authenticate Agent
 async function authenticateAgent(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -1070,13 +1008,13 @@ async function authenticateAgent(req, res, next) {
     return res.status(401).json({ success: false, message: 'Agent token required' });
   }
 
-  jwt.verify(token, global.JWT_SECRET, async (err, decoded) => {
+  jwt.verify(token, JWT_SECRET, async (err, decoded) => {
     if (err) {
       return res.status(403).json({ success: false, message: 'Invalid or expired token' });
     }
 
     try {
-      const user = await global.User.findById(decoded.userId);
+      const user = await User.findById(decoded.userId);
       
       if (!user || (!user.isAgent && !user.isAdmin)) {
         return res.status(403).json({ 
@@ -1102,32 +1040,10 @@ async function authenticateAgent(req, res, next) {
   });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// 📤 EXPORT FUNCTIONS
-// ════════════════════════════════════════════════════════════════════════════
-
-global.sendEmailOTP = sendEmailOTP;
-global.sendOrderConfirmationEmail = sendOrderConfirmationEmail;
-global.sendAgentAssignmentEmail = sendAgentAssignmentEmail;
-
+// Export middleware
 global.authenticateToken = authenticateToken;
 global.authenticateAdmin = authenticateAdmin;
 global.authenticateAgent = authenticateAgent;
-
-console.log('✅ Part 4/8 Loaded: Email Functions & Auth Middleware Ready');
-console.log('🔐 Middleware: authenticateToken, authenticateAdmin, authenticateAgent\n');
-
-// ════════════════════════════════════════════════════════════════════════════
-// END OF PART 4 - Continue to Part 5 for Authentication Routes
-// ════════════════════════════════════════════════════════════════════════════// ════════════════════════════════════════════════════════════════════════════
-// 🚀 UYEH TECH BACKEND SERVER v7.0 - PART 5 OF 8
-// ════════════════════════════════════════════════════════════════════════════
-// 🔐 Authentication Routes (FIXED LOGIN RESPONSE)
-// COPY THIS AFTER PART 4
-// ════════════════════════════════════════════════════════════════════════════
-
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 
 // ════════════════════════════════════════════════════════════════════════════
 // 🏠 ROOT & HEALTH CHECK ENDPOINTS
@@ -1135,21 +1051,26 @@ const jwt = require('jsonwebtoken');
 
 global.app.get('/', (req, res) => {
   res.json({
-    message: '🚀 UYEH TECH API v7.0 - Complete Backend System',
+    message: '🚀 UYEH TECH API v6.0 - Admin Dashboard + Downloads',
     version: '7.0.0',
     status: 'active',
-    adminEmail: global.ADMIN_EMAIL,
+    adminEmail: ADMIN_EMAIL,
     features: [
-      '✅ User Authentication & Authorization',
+      '✅ Complete Admin Dashboard',
       '✅ Real-time Chat System with WebSocket',
       '✅ Agent Dashboard & Management',
-      '✅ Admin Dashboard with Analytics',
-      '✅ Product & Order Management',
-      '✅ Download Link System',
+      '✅ Support Ticket System',
+      '✅ File Upload Support',
+      '✅ Download Link Management',
+      '✅ Download Tracking & Analytics',
+      '✅ User Management',
+      '✅ Order Management',
       '✅ Coupon System',
       '✅ Blog Management',
-      '✅ Email Notifications',
-      '✅ Payment Integration (Flutterwave)'
+      '✅ Product Management',
+      '✅ System Settings',
+      '✅ Payment Integration (Flutterwave)',
+      '✅ Email Notifications (Termii)'
     ]
   });
 });
@@ -1169,143 +1090,114 @@ global.app.get('/api/health', (req, res) => {
   });
 });
 
-// ════════════════════════════════════════════════════════════════════════════
-// 📧 EMAIL VERIFICATION ENDPOINTS
-// ════════════════════════════════════════════════════════════════════════════
 
-global.app.post('/api/auth/send-email-otp', async (req, res) => {
+// ========== AUTH ROUTES ==========
+app.post('/api/auth/send-email-otp', async (req, res) => {
   try {
     const { email } = req.body;
-    
     if (!email) {
-      return res.status(400).json({ success: false, message: 'Email is required' });
+      return res.status(400).json({ success: false, message: 'Email required' });
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-      return res.status(400).json({ success: false, message: 'Invalid email format' });
+      return res.status(400).json({ success: false, message: 'Invalid email' });
     }
 
     const cleanEmail = email.toLowerCase().trim();
-    const otp = global.generateOTP();
+    const otp = generateOTP();
    
-    global.otpStore.set(cleanEmail, {
+    otpStore.set(cleanEmail, {
       code: otp,
       expires: Date.now() + 10 * 60 * 1000,
-      attempts: 0,
-      maxAttempts: 5
+      attempts: 0
     });
 
-    await global.sendEmailOTP(cleanEmail, otp, 'verification');
+    await sendEmailOTP(cleanEmail, otp, 'verification');
 
     res.json({
       success: true,
-      message: 'Verification code sent to your email',
+      message: 'Verification code sent',
       email: cleanEmail,
-      expiresIn: '10 minutes',
       ...(process.env.NODE_ENV === 'development' && { debug_otp: otp })
     });
-    
   } catch (error) {
     console.error('❌ Send OTP error:', error);
-    res.status(500).json({ success: false, message: 'Failed to send verification code' });
+    res.status(500).json({ success: false, message: 'Failed to send code' });
   }
 });
 
-global.app.post('/api/auth/verify-email-otp', async (req, res) => {
+app.post('/api/auth/verify-email-otp', async (req, res) => {
   try {
     const { email, code } = req.body;
-    
     if (!email || !code) {
-      return res.status(400).json({ success: false, message: 'Email and code are required' });
+      return res.status(400).json({ success: false, message: 'Email and code required' });
     }
 
     const cleanEmail = email.toLowerCase().trim();
-    const storedOTP = global.otpStore.get(cleanEmail);
+    const storedOTP = otpStore.get(cleanEmail);
 
     if (!storedOTP) {
-      return res.status(400).json({ success: false, message: 'No verification code found. Please request a new one.' });
+      return res.status(400).json({ success: false, message: 'No code found' });
     }
 
     if (Date.now() > storedOTP.expires) {
-      global.otpStore.delete(cleanEmail);
-      return res.status(400).json({ success: false, message: 'Verification code expired. Please request a new one.' });
+      otpStore.delete(cleanEmail);
+      return res.status(400).json({ success: false, message: 'Code expired' });
     }
 
-    if (storedOTP.attempts >= storedOTP.maxAttempts) {
-      global.otpStore.delete(cleanEmail);
-      return res.status(400).json({ success: false, message: 'Too many incorrect attempts. Please request a new code.' });
+    if (storedOTP.attempts >= 5) {
+      otpStore.delete(cleanEmail);
+      return res.status(400).json({ success: false, message: 'Too many attempts' });
     }
 
-    if (storedOTP.code !== code.trim()) {
+    if (storedOTP.code !== code) {
       storedOTP.attempts += 1;
-      global.otpStore.set(cleanEmail, storedOTP);
-      const attemptsLeft = storedOTP.maxAttempts - storedOTP.attempts;
-      return res.status(400).json({ 
-        success: false, 
-        message: `Invalid verification code. ${attemptsLeft} attempt(s) remaining.` 
-      });
+      otpStore.set(cleanEmail, storedOTP);
+      return res.status(400).json({ success: false, message: 'Invalid code' });
     }
 
-    global.otpStore.delete(cleanEmail);
-    res.json({ 
-      success: true, 
-      message: 'Email verified successfully!',
-      verified: true
-    });
-    
+    otpStore.delete(cleanEmail);
+    res.json({ success: true, message: 'Email verified' });
   } catch (error) {
     console.error('❌ Verify OTP error:', error);
     res.status(500).json({ success: false, message: 'Verification failed' });
   }
 });
 
-// ════════════════════════════════════════════════════════════════════════════
-// 📝 USER SIGNUP
-// ════════════════════════════════════════════════════════════════════════════
-
-global.app.post('/api/auth/signup', async (req, res) => {
+app.post('/api/auth/signup', async (req, res) => {
   try {
-    const { fullName, email, password, phone, country, emailVerified } = req.body;
+    const { fullName, email, password, emailVerified } = req.body;
 
     if (!fullName || !email || !password) {
-      return res.status(400).json({ success: false, message: 'Full name, email, and password are required' });
+      return res.status(400).json({ success: false, message: 'All fields required' });
     }
 
     if (!emailVerified) {
-      return res.status(400).json({ success: false, message: 'Please verify your email first' });
+      return res.status(400).json({ success: false, message: 'Verify email first' });
     }
 
-    const existingUser = await global.User.findOne({ email: email.toLowerCase() });
+    const existingUser = await User.findOne({ email: email.toLowerCase() });
     if (existingUser) {
-      return res.status(400).json({ success: false, message: 'Email is already registered' });
+      return res.status(400).json({ success: false, message: 'Email already registered' });
     }
 
     if (password.length < 8) {
-      return res.status(400).json({ success: false, message: 'Password must be at least 8 characters long' });
+      return res.status(400).json({ success: false, message: 'Password must be 8+ characters' });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const user = new global.User({
-      fullName: fullName.trim(),
-      email: email.toLowerCase().trim(),
+    const user = new User({
+      fullName,
+      email: email.toLowerCase(),
       password: hashedPassword,
-      phone: phone || '',
-      country: country || '',
-      emailVerified: true,
-      lastLogin: new Date()
+      emailVerified: true
     });
 
     await user.save();
 
-    const token = jwt.sign(
-      { userId: user._id, email: user.email }, 
-      global.JWT_SECRET, 
-      { expiresIn: '7d' }
-    );
-
-    console.log(`✅ New user registered: ${user.email}`);
+    const token = jwt.sign({ userId: user._id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
 
     res.status(201).json({
       success: true,
@@ -1313,20 +1205,14 @@ global.app.post('/api/auth/signup', async (req, res) => {
       token,
       user: {
         id: user._id,
-        fullName: user.fullName,
         name: user.fullName,
         email: user.email,
-        phone: user.phone,
-        country: user.country,
-        emailVerified: user.emailVerified,
-        isAdmin: user.isAdmin,
-        isAgent: user.isAgent
+        isAdmin: user.isAdmin
       }
     });
-    
   } catch (error) {
     console.error('❌ Signup error:', error);
-    res.status(500).json({ success: false, message: 'Account creation failed' });
+    res.status(500).json({ success: false, message: 'Signup failed' });
   }
 });
 
@@ -1397,15 +1283,185 @@ global.app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// ════════════════════════════════════════════════════════════════════════════
-// 🔐 ADMIN LOGIN
-// ════════════════════════════════════════════════════════════════════════════
+// Change Password (Authenticated)
+app.post('/api/auth/change-password', authenticateToken, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
 
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ success: false, message: 'Current and new password are required' });
+    }
+
+    if (newPassword.length < 8) {
+      return res.status(400).json({ success: false, message: 'New password must be at least 8 characters long' });
+    }
+
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // Verify current password
+    const isPasswordValid = await bcrypt.compare(currentPassword, user.password);
+    if (!isPasswordValid) {
+      return res.status(401).json({ success: false, message: 'Current password is incorrect' });
+    }
+
+    // Update to new password
+    user.password = await bcrypt.hash(newPassword, 10);
+    await user.save();
+
+    console.log(`✅ Password changed: ${user.email}`);
+
+    res.json({ success: true, message: 'Password changed successfully' });
+    
+  } catch (error) {
+    console.error('❌ Change password error:', error);
+    res.status(500).json({ success: false, message: 'Password change failed' });
+  }
+});
+
+// Delete Account
+app.delete('/api/auth/delete-account', authenticateToken, async (req, res) => {
+  try {
+    const { password } = req.body;
+
+    if (!password) {
+      return res.status(400).json({ success: false, message: 'Password is required to delete account' });
+    }
+
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // Verify password
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      return res.status(401).json({ success: false, message: 'Incorrect password' });
+    }
+
+    // Delete user
+    await User.findByIdAndDelete(req.user.userId);
+
+    console.log(`✅ Account deleted: ${user.email}`);
+
+    res.json({ success: true, message: 'Account deleted successfully' });
+    
+  } catch (error) {
+    console.error('❌ Delete account error:', error);
+    res.status(500).json({ success: false, message: 'Account deletion failed' });
+  }
+});
+
+// Toggle Two-Factor Authentication
+global.app.post('/api/auth/toggle-2fa', authenticateToken, async (req, res) => {
+  try {
+    const { enable } = req.body;
+    
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    user.twoFactorEnabled = enable === true;
+    if (!enable) {
+      user.twoFactorSecret = null;
+    }
+    
+    await user.save();
+
+    res.json({ 
+      success: true, 
+      message: `Two-factor authentication ${enable ? 'enabled' : 'disabled'}`,
+      twoFactorEnabled: user.twoFactorEnabled
+    });
+    
+  } catch (error) {
+    console.error('❌ Toggle 2FA error:', error);
+    res.status(500).json({ success: false, message: '2FA toggle failed' });
+  }
+});
+
+
+global.app.post('/api/auth/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ success: false, message: 'Email required' });
+    }
+
+    const user = await User.findOne({ email: email.toLowerCase() });
+    if (!user) {
+      return res.json({ success: true, message: 'If account exists, code sent' });
+    }
+
+    const resetOTP = generateOTP();
+   
+    otpStore.set(`reset_${email.toLowerCase()}`, {
+      code: resetOTP,
+      expires: Date.now() + 10 * 60 * 1000,
+      attempts: 0
+    });
+
+    await sendEmailOTP(email, resetOTP, 'password-reset');
+
+    res.json({ success: true, message: 'Reset code sent' });
+  } catch (error) {
+    console.error('❌ Forgot password error:', error);
+    res.status(500).json({ success: false, message: 'Request failed' });
+  }
+});
+
+global.app.post('/api/auth/reset-password', async (req, res) => {
+  try {
+    const { email, code, newPassword } = req.body;
+
+    if (!email || !code || !newPassword) {
+      return res.status(400).json({ success: false, message: 'All fields required' });
+    }
+
+    if (newPassword.length < 8) {
+      return res.status(400).json({ success: false, message: 'Password must be 8+ characters' });
+    }
+
+    const cleanEmail = email.toLowerCase().trim();
+    const storedOTP = otpStore.get(`reset_${cleanEmail}`);
+
+    if (!storedOTP || Date.now() > storedOTP.expires) {
+      return res.status(400).json({ success: false, message: 'Invalid or expired code' });
+    }
+
+    if (storedOTP.code !== code) {
+      return res.status(400).json({ success: false, message: 'Invalid code' });
+    }
+
+    const user = await User.findOne({ email: cleanEmail });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    user.password = await bcrypt.hash(newPassword, 10);
+    await user.save();
+
+    otpStore.delete(`reset_${cleanEmail}`);
+
+    res.json({ success: true, message: 'Password reset successfully' });
+  } catch (error) {
+    console.error('❌ Reset password error:', error);
+    res.status(500).json({ success: false, message: 'Reset failed' });
+  }
+});
+
+
+
+
+// ========== ADMIN AUTH ==========
 global.app.post('/api/auth/admin/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    const user = await global.User.findOne({ email: email.toLowerCase() });
+    const user = await User.findOne({ email: email.toLowerCase() });
     if (!user || !user.isAdmin) {
       return res.status(403).json({ success: false, message: 'Admin access required', isAdmin: false });
     }
@@ -1418,7 +1474,7 @@ global.app.post('/api/auth/admin/login', async (req, res) => {
     user.lastLogin = new Date();
     await user.save();
 
-    const token = jwt.sign({ userId: user._id, email: user.email }, global.JWT_SECRET, { expiresIn: '24h' });
+    const token = jwt.sign({ userId: user._id, email: user.email }, JWT_SECRET, { expiresIn: '24h' });
 
     res.json({
       success: true,
@@ -1427,7 +1483,6 @@ global.app.post('/api/auth/admin/login', async (req, res) => {
       isAdmin: true,
       user: {
         id: user._id,
-        fullName: user.fullName,
         name: user.fullName,
         email: user.email
       }
@@ -1438,23 +1493,24 @@ global.app.post('/api/auth/admin/login', async (req, res) => {
   }
 });
 
-global.app.get('/api/auth/admin/verify', global.authenticateAdmin, async (req, res) => {
+global.app.get('/api/auth/admin/verify', authenticateAdmin, async (req, res) => {
   res.json({
     success: true,
     isAdmin: true,
     user: {
       id: req.adminUser._id,
-      fullName: req.adminUser.fullName,
       name: req.adminUser.fullName,
       email: req.adminUser.email
     }
   });
 });
 
-// ════════════════════════════════════════════════════════════════════════════
-// 👨‍💼 AGENT LOGIN
-// ════════════════════════════════════════════════════════════════════════════
 
+// ═════════════════════════════════════════════════════════════════════════════
+// AGENT AUTHENTICATION (NEW)
+// ═════════════════════════════════════════════════════════════════════════════
+
+// Agent Login
 global.app.post('/api/auth/agent/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -1463,7 +1519,7 @@ global.app.post('/api/auth/agent/login', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Email and password are required' });
     }
 
-    const user = await global.User.findOne({ email: email.toLowerCase() });
+    const user = await User.findOne({ email: email.toLowerCase() });
     
     if (!user || (!user.isAgent && !user.isAdmin)) {
       return res.status(403).json({ 
@@ -1487,7 +1543,7 @@ global.app.post('/api/auth/agent/login', async (req, res) => {
 
     const token = jwt.sign(
       { userId: user._id, email: user.email }, 
-      global.JWT_SECRET, 
+      JWT_SECRET, 
       { expiresIn: '12h' }
     );
 
@@ -1501,7 +1557,6 @@ global.app.post('/api/auth/agent/login', async (req, res) => {
       isAdmin: user.isAdmin,
       user: {
         id: user._id,
-        fullName: user.fullName,
         name: user.fullName,
         email: user.email,
         agentInfo: user.agentInfo
@@ -1514,135 +1569,20 @@ global.app.post('/api/auth/agent/login', async (req, res) => {
   }
 });
 
-global.app.get('/api/auth/agent/verify', global.authenticateAgent, async (req, res) => {
+// Verify Agent Token
+app.get('/api/auth/agent/verify', authenticateAgent, async (req, res) => {
   res.json({
     success: true,
     isAgent: true,
     isAdmin: req.agentUser.isAdmin,
     user: {
       id: req.agentUser._id,
-      fullName: req.agentUser.fullName,
       name: req.agentUser.fullName,
       email: req.agentUser.email,
       agentInfo: req.agentUser.agentInfo
     }
   });
 });
-
-// ════════════════════════════════════════════════════════════════════════════
-// 🔄 PASSWORD RESET
-// ════════════════════════════════════════════════════════════════════════════
-
-global.app.post('/api/auth/forgot-password', async (req, res) => {
-  try {
-    const { email } = req.body;
-    
-    if (!email) {
-      return res.status(400).json({ success: false, message: 'Email is required' });
-    }
-
-    const cleanEmail = email.toLowerCase().trim();
-    const user = await global.User.findOne({ email: cleanEmail });
-    
-    if (!user) {
-      return res.json({ 
-        success: true, 
-        message: 'If an account exists with this email, a reset code has been sent' 
-      });
-    }
-
-    const resetOTP = global.generateOTP();
-   
-    global.otpStore.set(`reset_${cleanEmail}`, {
-      code: resetOTP,
-      expires: Date.now() + 10 * 60 * 1000,
-      attempts: 0,
-      maxAttempts: 5
-    });
-
-    await global.sendEmailOTP(cleanEmail, resetOTP, 'password-reset');
-
-    res.json({ 
-      success: true, 
-      message: 'Password reset code sent to your email',
-      expiresIn: '10 minutes'
-    });
-    
-  } catch (error) {
-    console.error('❌ Forgot password error:', error);
-    res.status(500).json({ success: false, message: 'Request failed' });
-  }
-});
-
-global.app.post('/api/auth/reset-password', async (req, res) => {
-  try {
-    const { email, code, newPassword } = req.body;
-
-    if (!email || !code || !newPassword) {
-      return res.status(400).json({ success: false, message: 'Email, code, and new password are required' });
-    }
-
-    if (newPassword.length < 8) {
-      return res.status(400).json({ success: false, message: 'Password must be at least 8 characters long' });
-    }
-
-    const cleanEmail = email.toLowerCase().trim();
-    const storedOTP = global.otpStore.get(`reset_${cleanEmail}`);
-
-    if (!storedOTP) {
-      return res.status(400).json({ success: false, message: 'No reset code found. Please request a new one.' });
-    }
-
-    if (Date.now() > storedOTP.expires) {
-      global.otpStore.delete(`reset_${cleanEmail}`);
-      return res.status(400).json({ success: false, message: 'Reset code expired. Please request a new one.' });
-    }
-
-    if (storedOTP.attempts >= storedOTP.maxAttempts) {
-      global.otpStore.delete(`reset_${cleanEmail}`);
-      return res.status(400).json({ success: false, message: 'Too many incorrect attempts. Please request a new code.' });
-    }
-
-    if (storedOTP.code !== code.trim()) {
-      storedOTP.attempts += 1;
-      global.otpStore.set(`reset_${cleanEmail}`, storedOTP);
-      return res.status(400).json({ success: false, message: 'Invalid reset code' });
-    }
-
-    const user = await global.User.findOne({ email: cleanEmail });
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-
-    user.password = await bcrypt.hash(newPassword, 10);
-    await user.save();
-
-    global.otpStore.delete(`reset_${cleanEmail}`);
-
-    console.log(`✅ Password reset successful: ${user.email}`);
-
-    res.json({ 
-      success: true, 
-      message: 'Password reset successfully! You can now login with your new password.' 
-    });
-    
-  } catch (error) {
-    console.error('❌ Reset password error:', error);
-    res.status(500).json({ success: false, message: 'Password reset failed' });
-  }
-});
-
-console.log('✅ Part 5/8 Loaded: Authentication Routes Ready');
-console.log('🔐 Routes: Signup, Login (FIXED), Admin, Agent, Password Reset\n');
-
-// ════════════════════════════════════════════════════════════════════════════
-// END OF PART 5 - Continue to Part 6 for User & Admin Routes
-// ════════════════════════════════════════════════════════════════════════════// ════════════════════════════════════════════════════════════════════════════
-// 🚀 UYEH TECH BACKEND SERVER v7.0 - PART 6 OF 8
-// ════════════════════════════════════════════════════════════════════════════
-// 👤 User Profile & Admin Dashboard Routes
-// COPY THIS AFTER PART 5
-// ════════════════════════════════════════════════════════════════════════════
 
 // ════════════════════════════════════════════════════════════════════════════
 // 👤 USER PROFILE ROUTES
@@ -1718,39 +1658,170 @@ global.app.put('/api/profile', global.authenticateToken, async (req, res) => {
   }
 });
 
-// ════════════════════════════════════════════════════════════════════════════
-// 📊 ADMIN DASHBOARD
-// ════════════════════════════════════════════════════════════════════════════
 
-global.app.get('/api/admin/dashboard', global.authenticateAdmin, async (req, res) => {
+// Get Notification Preferences
+app.get('/api/user/notifications', authenticateToken, async (req, res) => {
   try {
-    const totalUsers = await global.User.countDocuments();
-    const totalOrders = await global.Order.countDocuments();
-    const totalProducts = await global.Product.countDocuments();
-    const totalBlogPosts = await global.BlogPost.countDocuments();
-    const publishedPosts = await global.BlogPost.countDocuments({ status: 'published' });
-    const activeCoupons = await global.Coupon.countDocuments({ isActive: true });
-    const totalDownloads = await global.Download.countDocuments();
-    const totalChats = await global.Chat.countDocuments();
-    const openChats = await global.Chat.countDocuments({ status: { $in: ['open', 'assigned', 'in-progress'] } });
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    res.json({
+      success: true,
+      preferences: user.notificationPreferences || {
+        email: true,
+        orders: true,
+        marketing: false
+      }
+    });
     
-    const revenueData = await global.Order.aggregate([
+  } catch (error) {
+    console.error('❌ Get notifications error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch preferences' });
+  }
+});
+
+// Update Notification Preferences
+app.put('/api/user/notifications/update', authenticateToken, async (req, res) => {
+  try {
+    const { email, orders, marketing } = req.body;
+    
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    user.notificationPreferences = {
+      email: email !== undefined ? email : user.notificationPreferences.email,
+      orders: orders !== undefined ? orders : user.notificationPreferences.orders,
+      marketing: marketing !== undefined ? marketing : user.notificationPreferences.marketing
+    };
+
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Notification preferences updated',
+      preferences: user.notificationPreferences
+    });
+    
+  } catch (error) {
+    console.error('❌ Update notifications error:', error);
+    res.status(500).json({ success: false, message: 'Update failed' });
+  }
+});
+
+// Get Payment Methods
+app.get('/api/user/payment-methods', authenticateToken, async (req, res) => {
+  try {
+    const paymentMethods = await PaymentMethod.find({ userId: req.user.userId }).sort({ createdAt: -1 });
+    
+    res.json({
+      success: true,
+      paymentMethods: paymentMethods.map(pm => ({
+        id: pm._id,
+        type: pm.type,
+        lastFour: pm.lastFour,
+        expiry: pm.expiry,
+        cardholderName: pm.cardholderName,
+        isDefault: pm.isDefault
+      }))
+    });
+    
+  } catch (error) {
+    console.error('❌ Get payment methods error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch payment methods' });
+  }
+});
+
+// Add Payment Method
+app.post('/api/user/payment-methods/add', authenticateToken, async (req, res) => {
+  try {
+    const { type, lastFour, expiry, cardholderName, isDefault } = req.body;
+
+    if (!type || !lastFour || !expiry || !cardholderName) {
+      return res.status(400).json({ success: false, message: 'All fields are required' });
+    }
+
+    // If this is set as default, unset other defaults
+    if (isDefault) {
+      await PaymentMethod.updateMany(
+        { userId: req.user.userId },
+        { $set: { isDefault: false } }
+      );
+    }
+
+    const paymentMethod = new PaymentMethod({
+      userId: req.user.userId,
+      type,
+      lastFour,
+      expiry,
+      cardholderName,
+      isDefault: isDefault || false
+    });
+
+    await paymentMethod.save();
+
+    res.json({
+      success: true,
+      message: 'Payment method added',
+      paymentMethod: {
+        id: paymentMethod._id,
+        type: paymentMethod.type,
+        lastFour: paymentMethod.lastFour,
+        expiry: paymentMethod.expiry,
+        cardholderName: paymentMethod.cardholderName,
+        isDefault: paymentMethod.isDefault
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Add payment method error:', error);
+    res.status(500).json({ success: false, message: 'Failed to add payment method' });
+  }
+});
+
+console.log('\n✅ Part 2 Loaded: Email Functions & Authentication Routes Ready');
+console.log('🔐 Auth Endpoints: Signup, Login, OTP, Password Reset, Admin, Agent');
+console.log('👤 Profile Endpoints: Get/Update Profile, Notifications, Payment Methods\n');
+
+
+
+// ========== ADMIN DASHBOARD OVERVIEW ==========
+app.get('/api/admin/dashboard', authenticateAdmin, async (req, res) => {
+  try {
+    const totalUsers = await User.countDocuments();
+    const totalOrders = await Order.countDocuments();
+    const totalProducts = await Product.countDocuments();
+    const totalBlogPosts = await BlogPost.countDocuments();
+    const publishedPosts = await BlogPost.countDocuments({ status: 'published' });
+    const activeCoupons = await Coupon.countDocuments({ isActive: true });
+    const totalDownloads = await Download.countDocuments();
+    const totalChats = await Chat.countDocuments(); // NEW v7.0
+    const openChats = await Chat.countDocuments({ status: { $in: ['open', 'assigned', 'in-progress'] } }); // NEW v7.0
+       
+    
+    // Revenue calculation
+    const revenueData = await Order.aggregate([
       { $match: { status: 'completed' } },
       { $group: { _id: null, total: { $sum: '$total' } } }
     ]);
     const totalRevenue = revenueData[0]?.total || 0;
 
+    // Recent stats (last 7 days)
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const recentOrders = await global.Order.countDocuments({ createdAt: { $gte: sevenDaysAgo } });
-    const recentRevenue = await global.Order.aggregate([
+    const recentOrders = await Order.countDocuments({ createdAt: { $gte: sevenDaysAgo } });
+    const recentRevenue = await Order.aggregate([
       { $match: { status: 'completed', createdAt: { $gte: sevenDaysAgo } } },
       { $group: { _id: null, total: { $sum: '$total' } } }
     ]);
-    const recentDownloads = await global.Download.countDocuments({ downloadedAt: { $gte: sevenDaysAgo } });
-    const newUsers = await global.User.countDocuments({ createdAt: { $gte: sevenDaysAgo } });
-    const newChats = await global.Chat.countDocuments({ createdAt: { $gte: sevenDaysAgo } });
+    const recentDownloads = await Download.countDocuments({ downloadedAt: { $gte: sevenDaysAgo } });
+    const newUsers = await User.countDocuments({ createdAt: { $gte: sevenDaysAgo } });
+    const newChats = await Chat.countDocuments({ createdAt: { $gte: sevenDaysAgo } }); // NEW v7.0
 
-    const topProducts = await global.Order.aggregate([
+    // Top selling products
+    const topProducts = await Order.aggregate([
       { $match: { status: 'completed' } },
       { $unwind: '$items' },
       { $group: { 
@@ -1762,12 +1833,14 @@ global.app.get('/api/admin/dashboard', global.authenticateAdmin, async (req, res
       { $limit: 5 }
     ]);
 
-    const recentOrdersList = await global.Order.find()
+    // Recent orders list
+    const recentOrdersList = await Order.find()
       .sort({ createdAt: -1 })
       .limit(10)
       .populate('userId', 'fullName email');
 
-    const activeAgents = await global.User.countDocuments({ 
+    // Active agents (NEW v7.0)
+    const activeAgents = await User.countDocuments({ 
       isAgent: true, 
       'agentInfo.status': { $in: ['online', 'busy'] } 
     });
@@ -1784,16 +1857,16 @@ global.app.get('/api/admin/dashboard', global.authenticateAdmin, async (req, res
           totalBlogPosts,
           publishedPosts,
           totalDownloads,
-          totalChats,
-          openChats,
-          activeAgents
+          totalChats, // NEW v7.0
+          openChats, // NEW v7.0
+          activeAgents // NEW v7.0
         },
         recentStats: {
           newUsers,
           recentOrders,
           recentRevenue: recentRevenue[0]?.total || 0,
           recentDownloads,
-          newChats
+          newChats // NEW v7.0
         },
         topProducts,
         recentOrdersList
@@ -1805,16 +1878,151 @@ global.app.get('/api/admin/dashboard', global.authenticateAdmin, async (req, res
   }
 });
 
-// ════════════════════════════════════════════════════════════════════════════
-// 👥 USER MANAGEMENT
-// ════════════════════════════════════════════════════════════════════════════
+// ========== ADMIN ANALYTICS ==========
+app.get('/api/admin/analytics', authenticateAdmin, async (req, res) => {
+  try {
+    const { period = '7d' } = req.query;
+    
+    let startDate;
+    const now = new Date();
+    
+    switch(period) {
+      case '24h':
+        startDate = new Date(now - 24 * 60 * 60 * 1000);
+        break;
+      case '7d':
+        startDate = new Date(now - 7 * 24 * 60 * 60 * 1000);
+        break;
+      case '30d':
+        startDate = new Date(now - 30 * 24 * 60 * 60 * 1000);
+        break;
+      case '90d':
+        startDate = new Date(now - 90 * 24 * 60 * 60 * 1000);
+        break;
+      default:
+        startDate = new Date(now - 7 * 24 * 60 * 60 * 1000);
+    }
 
-global.app.get('/api/admin/users', global.authenticateAdmin, async (req, res) => {
+    // Daily revenue and orders
+    const dailyStats = await Order.aggregate([
+      { $match: { createdAt: { $gte: startDate } } },
+      { $group: {
+        _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+        orders: { $sum: 1 },
+        revenue: { $sum: '$total' },
+        completed: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } }
+      }},
+      { $sort: { _id: 1 } }
+    ]);
+
+    // User growth
+    const userGrowth = await User.aggregate([
+      { $match: { createdAt: { $gte: startDate } } },
+      { $group: {
+        _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+        count: { $sum: 1 }
+      }},
+      { $sort: { _id: 1 } }
+    ]);
+
+    // Chat trends (NEW v7.0)
+    const chatTrends = await Chat.aggregate([
+      { $match: { createdAt: { $gte: startDate } } },
+      { $group: {
+        _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+        count: { $sum: 1 },
+        resolved: { $sum: { $cond: [{ $eq: ['$status', 'resolved'] }, 1, 0] } }
+      }},
+      { $sort: { _id: 1 } }
+    ]);
+
+    // Download trends
+    const downloadTrends = await Download.aggregate([
+      { $match: { downloadedAt: { $gte: startDate } } },
+      { $group: {
+        _id: { $dateToString: { format: '%Y-%m-%d', date: '$downloadedAt' } },
+        count: { $sum: 1 }
+      }},
+      { $sort: { _id: 1 } }
+    ]);
+
+    // Product performance
+    const productPerformance = await Order.aggregate([
+      { $match: { status: 'completed', createdAt: { $gte: startDate } } },
+      { $unwind: '$items' },
+      { $group: {
+        _id: '$items.title',
+        sales: { $sum: 1 },
+        revenue: { $sum: '$items.price' }
+      }},
+      { $sort: { revenue: -1 } },
+      { $limit: 10 }
+    ]);
+
+    // Category distribution
+    const categoryStats = await Order.aggregate([
+      { $match: { status: 'completed', createdAt: { $gte: startDate } } },
+      { $unwind: '$items' },
+      { $group: {
+        _id: '$items.category',
+        count: { $sum: 1 },
+        revenue: { $sum: '$items.price' }
+      }},
+      { $sort: { revenue: -1 } }
+    ]);
+
+    // Agent performance (NEW v7.0)
+    const agentPerformance = await Chat.aggregate([
+      { $match: { assignedAgent: { $ne: null }, createdAt: { $gte: startDate } } },
+      { $lookup: {
+        from: 'users',
+        localField: 'assignedAgent',
+        foreignField: '_id',
+        as: 'agent'
+      }},
+      { $unwind: '$agent' },
+      { $group: {
+        _id: '$assignedAgent',
+        agentName: { $first: '$agent.fullName' },
+        totalChats: { $sum: 1 },
+        resolved: { $sum: { $cond: [{ $eq: ['$status', 'resolved'] }, 1, 0] } },
+        avgResponseTime: { $avg: '$firstResponseTime' }
+      }},
+      { $sort: { totalChats: -1 } },
+      { $limit: 10 }
+    ]);
+
+    res.json({
+      success: true,
+      analytics: {
+        period,
+        startDate,
+        dailyStats,
+        userGrowth,
+        downloadTrends,
+        chatTrends, // NEW v7.0
+        productPerformance,
+        categoryStats,
+        agentPerformance // NEW v7.0
+      }
+    });
+  } catch (error) {
+    console.error('❌ Analytics error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch analytics' });
+  }
+});
+
+
+// ========== USER MANAGEMENT ==========
+
+// Get All Users (with pagination and search)
+app.get('/api/admin/users', authenticateAdmin, async (req, res) => {
   try {
     const { page = 1, limit = 20, search = '', status = 'all', role = 'all' } = req.query;
     
     let query = {};
     
+    // Search by name or email
     if (search) {
       query.$or = [
         { fullName: { $regex: search, $options: 'i' } },
@@ -1822,12 +2030,14 @@ global.app.get('/api/admin/users', global.authenticateAdmin, async (req, res) =>
       ];
     }
     
+    // Filter by status
     if (status === 'banned') {
       query.isBanned = true;
     } else if (status === 'active') {
       query.isBanned = false;
     }
 
+    // Filter by role (NEW v7.0)
     if (role === 'admin') {
       query.isAdmin = true;
     } else if (role === 'agent') {
@@ -1839,20 +2049,21 @@ global.app.get('/api/admin/users', global.authenticateAdmin, async (req, res) =>
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
     
-    const users = await global.User.find(query)
+    const users = await User.find(query)
       .select('-password -twoFactorSecret')
       .sort({ createdAt: -1 })
       .limit(parseInt(limit))
       .skip(skip);
 
-    const total = await global.User.countDocuments(query);
+    const total = await User.countDocuments(query);
 
+    // Add statistics for each user
     const usersWithStats = await Promise.all(
       users.map(async (user) => {
-        const orderCount = await global.Order.countDocuments({ userId: user._id });
-        const downloadCount = await global.Download.countDocuments({ userId: user._id });
-        const chatCount = await global.Chat.countDocuments({ customerId: user.email });
-        const totalSpent = await global.Order.aggregate([
+        const orderCount = await Order.countDocuments({ userId: user._id });
+        const downloadCount = await Download.countDocuments({ userId: user._id });
+        const chatCount = await Chat.countDocuments({ customerId: user.email }); // NEW v7.0
+        const totalSpent = await Order.aggregate([
           { $match: { userId: user._id, status: 'completed' } },
           { $group: { _id: null, total: { $sum: '$total' } } }
         ]);
@@ -1860,7 +2071,7 @@ global.app.get('/api/admin/users', global.authenticateAdmin, async (req, res) =>
           ...user.toObject(),
           orderCount,
           downloadCount,
-          chatCount,
+          chatCount, // NEW v7.0
           totalSpent: totalSpent[0]?.total || 0
         };
       })
@@ -1882,27 +2093,31 @@ global.app.get('/api/admin/users', global.authenticateAdmin, async (req, res) =>
   }
 });
 
-global.app.get('/api/admin/users/:userId', global.authenticateAdmin, async (req, res) => {
+// Get Single User Details
+app.get('/api/admin/users/:userId', authenticateAdmin, async (req, res) => {
   try {
-    const user = await global.User.findById(req.params.userId).select('-password -twoFactorSecret');
+    const user = await User.findById(req.params.userId).select('-password -twoFactorSecret');
     
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    const orders = await global.Order.find({ userId: user._id })
+    // Get user's orders
+    const orders = await Order.find({ userId: user._id })
       .sort({ createdAt: -1 })
       .limit(10);
     
-    const orderCount = await global.Order.countDocuments({ userId: user._id });
-    const downloadCount = await global.Download.countDocuments({ userId: user._id });
+    const orderCount = await Order.countDocuments({ userId: user._id });
+    const downloadCount = await Download.countDocuments({ userId: user._id });
     
-    const chats = await global.Chat.find({ customerId: user.email })
+    // Get user's chats (NEW v7.0)
+    const chats = await Chat.find({ customerId: user.email })
       .sort({ createdAt: -1 })
       .limit(10);
-    const chatCount = await global.Chat.countDocuments({ customerId: user.email });
+    const chatCount = await Chat.countDocuments({ customerId: user.email });
 
-    const totalSpent = await global.Order.aggregate([
+    // Calculate total spent
+    const totalSpent = await Order.aggregate([
       { $match: { userId: user._id, status: 'completed' } },
       { $group: { _id: null, total: { $sum: '$total' } } }
     ]);
@@ -1913,10 +2128,10 @@ global.app.get('/api/admin/users/:userId', global.authenticateAdmin, async (req,
         ...user.toObject(),
         orderCount,
         downloadCount,
-        chatCount,
+        chatCount, // NEW v7.0
         totalSpent: totalSpent[0]?.total || 0,
         recentOrders: orders,
-        recentChats: chats
+        recentChats: chats // NEW v7.0
       }
     });
   } catch (error) {
@@ -1925,15 +2140,17 @@ global.app.get('/api/admin/users/:userId', global.authenticateAdmin, async (req,
   }
 });
 
-global.app.put('/api/admin/users/:userId/ban', global.authenticateAdmin, async (req, res) => {
+// Ban/Unban User
+app.put('/api/admin/users/:userId/ban', authenticateAdmin, async (req, res) => {
   try {
     const { isBanned, banReason } = req.body;
     
-    const user = await global.User.findById(req.params.userId);
+    const user = await User.findById(req.params.userId);
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
+    // Cannot ban admin users
     if (user.isAdmin) {
       return res.status(400).json({ success: false, message: 'Cannot ban administrator accounts' });
     }
@@ -1961,32 +2178,37 @@ global.app.put('/api/admin/users/:userId/ban', global.authenticateAdmin, async (
   }
 });
 
-global.app.delete('/api/admin/users/:userId', global.authenticateAdmin, async (req, res) => {
+// Delete User
+app.delete('/api/admin/users/:userId', authenticateAdmin, async (req, res) => {
   try {
     const userId = req.params.userId;
 
+    // Cannot delete own account
     if (userId === req.user.userId) {
       return res.status(400).json({ success: false, message: 'Cannot delete your own account' });
     }
 
-    const user = await global.User.findById(userId);
+    const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
+    // Cannot delete admin users
     if (user.isAdmin) {
       return res.status(400).json({ success: false, message: 'Cannot delete administrator accounts' });
     }
 
-    await global.Order.deleteMany({ userId: user._id });
-    await global.Download.deleteMany({ userId: user._id });
-    await global.PaymentMethod.deleteMany({ userId: user._id });
-    await global.Chat.updateMany(
+    // Delete user's data
+    await Order.deleteMany({ userId: user._id });
+    await Download.deleteMany({ userId: user._id });
+    await PaymentMethod.deleteMany({ userId: user._id });
+    await Chat.updateMany(
       { customerId: user.email },
       { $set: { customerName: 'Deleted User', customerEmail: 'deleted@example.com' } }
     );
     
-    await global.User.findByIdAndDelete(userId);
+    // Delete the user
+    await User.findByIdAndDelete(userId);
 
     console.log(`🗑️  User deleted: ${user.email}`);
 
@@ -2000,15 +2222,12 @@ global.app.delete('/api/admin/users/:userId', global.authenticateAdmin, async (r
   }
 });
 
-// ════════════════════════════════════════════════════════════════════════════
-// 👨‍💼 AGENT PROMOTION/DEMOTION
-// ════════════════════════════════════════════════════════════════════════════
-
-global.app.put('/api/admin/users/:userId/promote-agent', global.authenticateAdmin, async (req, res) => {
+// Promote User to Agent (NEW v7.0)
+app.put('/api/admin/users/:userId/promote-agent', authenticateAdmin, async (req, res) => {
   try {
     const { department = 'General', maxChats = 5 } = req.body;
     
-    const user = await global.User.findById(req.params.userId);
+    const user = await User.findById(req.params.userId);
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
@@ -2048,9 +2267,10 @@ global.app.put('/api/admin/users/:userId/promote-agent', global.authenticateAdmi
   }
 });
 
-global.app.put('/api/admin/users/:userId/demote-agent', global.authenticateAdmin, async (req, res) => {
+// Demote Agent to User (NEW v7.0)
+app.put('/api/admin/users/:userId/demote-agent', authenticateAdmin, async (req, res) => {
   try {
-    const user = await global.User.findById(req.params.userId);
+    const user = await User.findById(req.params.userId);
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
@@ -2059,7 +2279,8 @@ global.app.put('/api/admin/users/:userId/demote-agent', global.authenticateAdmin
       return res.status(400).json({ success: false, message: 'User is not an agent' });
     }
 
-    await global.Chat.updateMany(
+    // Unassign all chats
+    await Chat.updateMany(
       { assignedAgent: user._id, status: { $ne: 'closed' } },
       { $set: { assignedAgent: null, status: 'open' } }
     );
@@ -2086,17 +2307,1199 @@ global.app.put('/api/admin/users/:userId/demote-agent', global.authenticateAdmin
   }
 });
 
-console.log('✅ Part 6/8 Loaded: User Profile & Admin Dashboard Ready');
-console.log('👤 Routes: Profile, Dashboard, User Management, Agent Promotion\n');
+// ========== ORDER MANAGEMENT ==========
+app.get('/api/admin/orders', authenticateAdmin, async (req, res) => {
+  try {
+    const { page = 1, limit = 20, status = 'all', search = '' } = req.query;
+    
+    let query = {};
+    
+    if (status && status !== 'all') {
+      query.status = status;
+    }
+    
+    if (search) {
+      query.$or = [
+        { orderReference: { $regex: search, $options: 'i' } },
+        { 'customerInfo.email': { $regex: search, $options: 'i' } },
+        { 'customerInfo.name': { $regex: search, $options: 'i' } }
+      ];
+    }
 
-// ════════════════════════════════════════════════════════════════════════════
-// END OF PART 6 - Continue to Part 7 for Chat & Agent Routes
-// ════════════════════════════════════════════════════════════════════════════// ════════════════════════════════════════════════════════════════════════════
-// 🚀 UYEH TECH BACKEND SERVER v7.0 - PART 7 OF 8
-// ════════════════════════════════════════════════════════════════════════════
-// 💬 Chat System & Agent Dashboard (🔧 FIXED: Agent Self-Assignment)
-// COPY THIS AFTER PART 6
-// ════════════════════════════════════════════════════════════════════════════
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const orders = await Order.find(query)
+      .populate('userId', 'fullName email')
+      .sort({ createdAt: -1 })
+      .limit(parseInt(limit))
+      .skip(skip);
+
+    const total = await Order.countDocuments(query);
+
+    res.json({
+      success: true,
+      orders: orders,
+      pagination: {
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        pages: Math.ceil(total / parseInt(limit))
+      }
+    });
+  } catch (error) {
+    console.error('❌ Get orders error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch orders' });
+  }
+});
+
+app.get('/api/admin/orders/:orderId', authenticateAdmin, async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.orderId).populate('userId', 'fullName email phone');
+    
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    res.json({
+      success: true,
+      order: order
+    });
+  } catch (error) {
+    console.error('❌ Get order error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch order' });
+  }
+});
+
+app.put('/api/admin/orders/:orderId/status', authenticateAdmin, async (req, res) => {
+  try {
+    const { status } = req.body;
+    
+    if (!['pending', 'completed', 'failed', 'refunded'].includes(status)) {
+      return res.status(400).json({ success: false, message: 'Invalid status' });
+    }
+
+    const order = await Order.findById(req.params.orderId);
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    order.status = status;
+    await order.save();
+
+    res.json({
+      success: true,
+      message: 'Order status updated',
+      order: order
+    });
+  } catch (error) {
+    console.error('❌ Update order error:', error);
+    res.status(500).json({ success: false, message: 'Update failed' });
+  }
+});
+
+app.delete('/api/admin/orders/:orderId', authenticateAdmin, async (req, res) => {
+  try {
+    const order = await Order.findByIdAndDelete(req.params.orderId);
+    
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    res.json({ success: true, message: 'Order deleted successfully' });
+  } catch (error) {
+    console.error('❌ Delete order error:', error);
+    res.status(500).json({ success: false, message: 'Delete failed' });
+  }
+});
+
+// ========== USER ORDERS ==========
+app.get('/api/orders', authenticateToken, async (req, res) => {
+  try {
+    const orders = await Order.find({ userId: req.user.userId }).sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      orders: orders,
+      count: orders.length
+    });
+  } catch (error) {
+    console.error('❌ Get orders error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch orders' });
+  }
+});
+
+// ========== CREATE ORDER WITH COUPON ==========
+app.post('/api/orders/create-with-coupon', authenticateToken, async (req, res) => {
+  try {
+    const { items, subtotal, couponCode, customerInfo, orderReference } = req.body;
+
+    if (!items || items.length === 0) {
+      return res.status(400).json({ success: false, message: 'Order must have items' });
+    }
+
+    if (!subtotal || !customerInfo) {
+      return res.status(400).json({ success: false, message: 'Missing order data' });
+    }
+
+    let discount = 0;
+    let finalTotal = subtotal;
+    let isFree = false;
+
+    if (couponCode) {
+      const cleanCode = couponCode.trim().toUpperCase();
+      const coupon = await Coupon.findOne({ code: cleanCode, isActive: true });
+
+      if (coupon) {
+        if (coupon.type === 'percentage') {
+          discount = (subtotal * coupon.discount) / 100;
+        } else {
+          discount = coupon.discount;
+        }
+
+        discount = Math.min(discount, subtotal);
+        finalTotal = Math.max(0, subtotal - discount);
+        isFree = finalTotal === 0;
+
+        coupon.usageCount += 1;
+        await coupon.save();
+      }
+    }
+
+    const order = new Order({
+      userId: req.user.userId,
+      orderReference: orderReference || 'UYEH-' + Date.now(),
+      items,
+      subtotal,
+      discount,
+      total: finalTotal,
+      couponCode: couponCode || null,
+      customerInfo,
+      status: isFree ? 'completed' : 'pending',
+      paymentInfo: {
+        method: isFree ? 'coupon' : 'flutterwave',
+        status: isFree ? 'successful' : 'pending',
+        paidAt: isFree ? new Date() : null
+      }
+    });
+
+    await order.save();
+
+    if (isFree) {
+      await sendOrderConfirmationEmail(customerInfo.email, order);
+    }
+
+    res.status(201).json({
+      success: true,
+      message: isFree ? '🎉 Order completed!' : 'Order created',
+      order: {
+        _id: order._id,
+        orderReference: order.orderReference,
+        total: order.total,
+        discount: order.discount,
+        status: order.status,
+        items: order.items,
+        isFree: isFree,
+        paymentRequired: !isFree
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Create order error:', error);
+    res.status(500).json({ success: false, message: 'Order creation failed' });
+  }
+});
+
+// ========== VERIFY PAYMENT ==========
+app.post('/api/orders/verify-payment', authenticateToken, async (req, res) => {
+  try {
+    const { transactionId, orderId } = req.body;
+
+    const order = await Order.findById(orderId);
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    const response = await axios.get(
+      `https://api.flutterwave.com/v3/transactions/${transactionId}/verify`,
+      { headers: { 'Authorization': `Bearer ${FLUTTERWAVE_SECRET_KEY}` } }
+    );
+
+    const paymentData = response.data.data;
+
+    if (paymentData.status === 'successful' && paymentData.amount >= order.total) {
+      order.status = 'completed';
+      order.paymentInfo.transactionId = transactionId;
+      order.paymentInfo.transactionRef = paymentData.tx_ref;
+      order.paymentInfo.status = 'successful';
+      order.paymentInfo.paidAt = new Date();
+      await order.save();
+
+      await sendOrderConfirmationEmail(order.customerInfo.email, order);
+
+      res.json({
+        success: true,
+        message: 'Payment verified',
+        order: order
+      });
+    } else {
+      order.status = 'failed';
+      order.paymentInfo.status = 'failed';
+      await order.save();
+
+      res.status(400).json({ success: false, message: 'Payment verification failed' });
+    }
+  } catch (error) {
+    console.error('❌ Verify payment error:', error);
+    res.status(500).json({ success: false, message: 'Verification failed' });
+  }
+});
+
+console.log('✅ Part 3 loaded: Dashboard, Analytics, Users & Orders configured');
+
+// ========== END OF PART 3 ==========
+// Continue to Part 4 for Download Links & Product Management// ========== UYEH TECH SERVER v6.0 - PART 4 OF 6 ==========
+// Download Links, Product Management & Coupon System
+// COPY THIS AFTER PART 3
+
+// ========== DOWNLOAD LINK SYSTEM ==========
+
+// Get orders with full product details including download links
+app.get('/api/orders/detailed', authenticateToken, async (req, res) => {
+  try {
+    const orders = await Order.find({ userId: req.user.userId })
+      .sort({ createdAt: -1 });
+
+    // Enhance orders with full product details including download links
+    const enhancedOrders = await Promise.all(
+      orders.map(async (order) => {
+        const enhancedItems = await Promise.all(
+          order.items.map(async (item) => {
+            // Try to find product by MongoDB ID first, then by title
+            let product = null;
+            if (mongoose.Types.ObjectId.isValid(item.id)) {
+              product = await Product.findById(item.id);
+            }
+            if (!product) {
+              product = await Product.findOne({ title: item.title });
+            }
+            
+            return {
+              ...item.toObject(),
+              downloadLink: product?.downloadLink || '',
+              image: product?.image || item.icon || '',
+              description: product?.description || '',
+              fileSize: product?.fileSize || '',
+              version: product?.version || '',
+              productId: product?._id || null
+            };
+          })
+        );
+
+        return {
+          ...order.toObject(),
+          items: enhancedItems,
+          canDownload: order.status === 'completed'
+        };
+      })
+    );
+
+    res.json({
+      success: true,
+      orders: enhancedOrders,
+      count: enhancedOrders.length
+    });
+  } catch (error) {
+    console.error('❌ Get detailed orders error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch orders' 
+    });
+  }
+});
+
+// Track downloads
+app.post('/api/orders/track-download', authenticateToken, async (req, res) => {
+  try {
+    const { productId, orderId } = req.body;
+
+    if (!productId || !orderId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Product ID and Order ID required'
+      });
+    }
+
+    // Verify user owns this order
+    const order = await Order.findOne({ _id: orderId, userId: req.user.userId });
+    if (!order) {
+      return res.status(403).json({
+        success: false,
+        message: 'Order not found or access denied'
+      });
+    }
+
+    if (order.status !== 'completed') {
+      return res.status(403).json({
+        success: false,
+        message: 'Order must be completed to download'
+      });
+    }
+
+    const download = new Download({
+      userId: req.user.userId,
+      productId,
+      orderId,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent']
+    });
+
+    await download.save();
+
+    res.json({
+      success: true,
+      message: 'Download tracked successfully'
+    });
+  } catch (error) {
+    console.error('❌ Track download error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to track download' 
+    });
+  }
+});
+
+// Admin: View download statistics
+app.get('/api/admin/downloads/stats', authenticateAdmin, async (req, res) => {
+  try {
+    const totalDownloads = await Download.countDocuments();
+    
+    const popularProducts = await Download.aggregate([
+      { 
+        $group: { 
+          _id: '$productId', 
+          count: { $sum: 1 } 
+        } 
+      },
+      { $sort: { count: -1 } },
+      { $limit: 10 },
+      {
+        $lookup: {
+          from: 'products',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'product'
+        }
+      },
+      { $unwind: { path: '$product', preserveNullAndEmptyArrays: true } }
+    ]);
+
+    const recentDownloads = await Download.find()
+      .populate('userId', 'fullName email')
+      .populate('productId', 'title category')
+      .sort({ downloadedAt: -1 })
+      .limit(20);
+
+    // Downloads by date (last 30 days)
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const downloadsByDate = await Download.aggregate([
+      { $match: { downloadedAt: { $gte: thirtyDaysAgo } } },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$downloadedAt' } },
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    res.json({
+      success: true,
+      stats: {
+        totalDownloads,
+        popularProducts,
+        recentDownloads,
+        downloadsByDate
+      }
+    });
+  } catch (error) {
+    console.error('❌ Download stats error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch stats' 
+    });
+  }
+});
+
+// ========== PRODUCT MANAGEMENT ==========
+app.get('/api/admin/products', authenticateAdmin, async (req, res) => {
+  try {
+    const { page = 1, limit = 20, category = 'all', status = 'all', search = '' } = req.query;
+    
+    let query = {};
+    
+    if (category && category !== 'all') {
+      query.category = category;
+    }
+    
+    if (status === 'active') {
+      query.isActive = true;
+    } else if (status === 'inactive') {
+      query.isActive = false;
+    } else if (status === 'featured') {
+      query.isFeatured = true;
+    }
+    
+    if (search) {
+      query.$or = [
+        { title: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const products = await Product.find(query)
+      .sort({ createdAt: -1 })
+      .limit(parseInt(limit))
+      .skip(skip);
+
+    const total = await Product.countDocuments(query);
+
+    res.json({
+      success: true,
+      products: products,
+      pagination: {
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        pages: Math.ceil(total / parseInt(limit))
+      }
+    });
+  } catch (error) {
+    console.error('❌ Get products error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch products' });
+  }
+});
+
+app.get('/api/products', async (req, res) => {
+  try {
+    const { category = 'all', featured = false, limit = 20, skip = 0 } = req.query;
+    
+    let query = { isActive: true };
+    
+    if (category && category !== 'all') {
+      query.category = category;
+    }
+    
+    if (featured === 'true') {
+      query.isFeatured = true;
+    }
+
+    const products = await Product.find(query)
+      .sort({ createdAt: -1 })
+      .limit(parseInt(limit))
+      .skip(parseInt(skip));
+
+    const total = await Product.countDocuments(query);
+
+    res.json({
+      success: true,
+      products: products,
+      count: products.length,
+      total: total
+    });
+  } catch (error) {
+    console.error('❌ Get products error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch products' });
+  }
+});
+
+app.get('/api/products/:id', async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    
+    if (!product) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+
+    res.json({
+      success: true,
+      product: product
+    });
+  } catch (error) {
+    console.error('❌ Get product error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch product' });
+  }
+});
+
+app.post('/api/admin/products', authenticateAdmin, async (req, res) => {
+  try {
+    const productData = req.body;
+
+    if (!productData.title || !productData.description || !productData.category || productData.price === undefined) {
+      return res.status(400).json({ success: false, message: 'Missing required fields' });
+    }
+
+    const product = new Product(productData);
+    await product.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Product created successfully',
+      product: product
+    });
+  } catch (error) {
+    console.error('❌ Create product error:', error);
+    res.status(500).json({ success: false, message: 'Creation failed' });
+  }
+});
+
+app.put('/api/admin/products/:id', authenticateAdmin, async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    if (!product) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+
+    Object.assign(product, req.body);
+    await product.save();
+
+    res.json({
+      success: true,
+      message: 'Product updated successfully',
+      product: product
+    });
+  } catch (error) {
+    console.error('❌ Update product error:', error);
+    res.status(500).json({ success: false, message: 'Update failed' });
+  }
+});
+
+app.delete('/api/admin/products/:id', authenticateAdmin, async (req, res) => {
+  try {
+    const product = await Product.findByIdAndDelete(req.params.id);
+    
+    if (!product) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+
+    res.json({ success: true, message: 'Product deleted successfully' });
+  } catch (error) {
+    console.error('❌ Delete product error:', error);
+    res.status(500).json({ success: false, message: 'Delete failed' });
+  }
+});
+
+// Seed products with download links
+app.post('/api/admin/products/seed-with-downloads', authenticateAdmin, async (req, res) => {
+  try {
+    const sampleProducts = [
+      {
+        title: 'Premium Landing Page Template',
+        description: 'Beautiful, responsive landing page template with modern design. Includes source files and documentation.',
+        category: 'Templates',
+        price: 49.99,
+        comparePrice: 99.99,
+        icon: '🎨',
+        downloadLink: 'https://drive.google.com/file/d/YOUR_FILE_ID_1/view?usp=sharing',
+        fileSize: '5.2 MB',
+        version: '1.0',
+        features: ['Fully Responsive', 'Modern Design', 'Easy Customization', 'Documentation Included'],
+        isActive: true,
+        isFeatured: true,
+        stock: 999
+      },
+      {
+        title: 'React Dashboard Components',
+        description: 'Complete set of React dashboard components ready to use in your projects. Built with TypeScript.',
+        category: 'Components',
+        price: 79.99,
+        comparePrice: 149.99,
+        icon: '⚛️',
+        downloadLink: 'https://drive.google.com/file/d/YOUR_FILE_ID_2/view?usp=sharing',
+        fileSize: '12.8 MB',
+        version: '2.1',
+        features: ['TypeScript Support', '50+ Components', 'Dark Mode', 'Fully Documented'],
+        isActive: true,
+        isFeatured: true,
+        stock: 999
+      },
+      {
+        title: 'Web Development Course Bundle',
+        description: 'Complete web development course from beginner to advanced. Includes video tutorials and project files.',
+        category: 'Courses',
+        price: 129.99,
+        comparePrice: 299.99,
+        icon: '📚',
+        downloadLink: 'https://drive.google.com/file/d/YOUR_FILE_ID_3/view?usp=sharing',
+        fileSize: '2.5 GB',
+        version: '1.0',
+        features: ['40+ Hours Video', 'Source Code', 'Certificate', 'Lifetime Access'],
+        isActive: true,
+        isFeatured: false,
+        stock: 999
+      },
+      {
+        title: 'E-commerce Admin Dashboard',
+        description: 'Professional admin dashboard for e-commerce platforms with analytics and management tools.',
+        category: 'Templates',
+        price: 89.99,
+        comparePrice: 179.99,
+        icon: '🛒',
+        downloadLink: 'https://drive.google.com/file/d/YOUR_FILE_ID_4/view?usp=sharing',
+        fileSize: '8.4 MB',
+        version: '1.5',
+        features: ['Analytics Dashboard', 'Order Management', 'User Management', 'Responsive Design'],
+        isActive: true,
+        isFeatured: true,
+        stock: 999
+      }
+    ];
+
+    let created = 0;
+    for (const productData of sampleProducts) {
+      const existing = await Product.findOne({ title: productData.title });
+      if (!existing) {
+        await Product.create(productData);
+        created++;
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Seeded ${created} products with download links`,
+      note: 'Remember to update the Google Drive links with actual file IDs!'
+    });
+  } catch (error) {
+    console.error('❌ Seed products error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to seed products' 
+    });
+  }
+});
+
+// ========== COUPON MANAGEMENT ==========
+app.get('/api/admin/coupons', authenticateAdmin, async (req, res) => {
+  try {
+    const { status = 'all' } = req.query;
+    
+    let query = {};
+    if (status === 'active') {
+      query.isActive = true;
+    } else if (status === 'inactive') {
+      query.isActive = false;
+    }
+
+    const coupons = await Coupon.find(query).sort({ createdAt: -1 });
+    
+    res.json({
+      success: true,
+      coupons: coupons,
+      count: coupons.length
+    });
+  } catch (error) {
+    console.error('❌ Get coupons error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch coupons' });
+  }
+});
+
+app.post('/api/admin/coupons', authenticateAdmin, async (req, res) => {
+  try {
+    const { code, discount, type, usageLimit, expiresAt, minPurchaseAmount, description } = req.body;
+
+    if (!code || discount === undefined || !type) {
+      return res.status(400).json({ success: false, message: 'Missing required fields' });
+    }
+
+    const existing = await Coupon.findOne({ code: code.toUpperCase() });
+    if (existing) {
+      return res.status(400).json({ success: false, message: 'Coupon code already exists' });
+    }
+
+    const coupon = new Coupon({
+      code: code.toUpperCase(),
+      discount,
+      type,
+      usageLimit: usageLimit || null,
+      expiresAt: expiresAt || null,
+      minPurchaseAmount: minPurchaseAmount || 0,
+      description: description || ''
+    });
+
+    await coupon.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Coupon created successfully',
+      coupon: coupon
+    });
+  } catch (error) {
+    console.error('❌ Create coupon error:', error);
+    res.status(500).json({ success: false, message: 'Creation failed' });
+  }
+});
+
+app.put('/api/admin/coupons/:code', authenticateAdmin, async (req, res) => {
+  try {
+    const { discount, type, usageLimit, expiresAt, minPurchaseAmount, description, isActive } = req.body;
+
+    const coupon = await Coupon.findOne({ code: req.params.code.toUpperCase() });
+    if (!coupon) {
+      return res.status(404).json({ success: false, message: 'Coupon not found' });
+    }
+
+    if (discount !== undefined) coupon.discount = discount;
+    if (type) coupon.type = type;
+    if (usageLimit !== undefined) coupon.usageLimit = usageLimit;
+    if (expiresAt !== undefined) coupon.expiresAt = expiresAt;
+    if (minPurchaseAmount !== undefined) coupon.minPurchaseAmount = minPurchaseAmount;
+    if (description !== undefined) coupon.description = description;
+    if (isActive !== undefined) coupon.isActive = isActive;
+
+    await coupon.save();
+
+    res.json({
+      success: true,
+      message: 'Coupon updated successfully',
+      coupon: coupon
+    });
+  } catch (error) {
+    console.error('❌ Update coupon error:', error);
+    res.status(500).json({ success: false, message: 'Update failed' });
+  }
+});
+
+app.delete('/api/admin/coupons/:code', authenticateAdmin, async (req, res) => {
+  try {
+    const coupon = await Coupon.findOneAndDelete({ code: req.params.code.toUpperCase() });
+    
+    if (!coupon) {
+      return res.status(404).json({ success: false, message: 'Coupon not found' });
+    }
+
+    res.json({ success: true, message: 'Coupon deleted successfully' });
+  } catch (error) {
+    console.error('❌ Delete coupon error:', error);
+    res.status(500).json({ success: false, message: 'Delete failed' });
+  }
+});
+
+app.post('/api/coupons/validate', authenticateToken, async (req, res) => {
+  try {
+    const { code, orderTotal } = req.body;
+    if (!code) {
+      return res.status(400).json({ success: false, message: 'Coupon code required' });
+    }
+
+    const cleanCode = code.trim().toUpperCase();
+    const coupon = await Coupon.findOne({ code: cleanCode });
+
+    if (!coupon) {
+      return res.status(404).json({ success: false, message: `Invalid coupon "${cleanCode}"` });
+    }
+
+    if (!coupon.isActive) {
+      return res.status(400).json({ success: false, message: 'Coupon inactive' });
+    }
+
+    if (coupon.expiresAt && new Date() > coupon.expiresAt) {
+      return res.status(400).json({ success: false, message: 'Coupon expired' });
+    }
+
+    if (coupon.usageLimit && coupon.usageCount >= coupon.usageLimit) {
+      return res.status(400).json({ success: false, message: 'Usage limit reached' });
+    }
+
+    if (orderTotal < coupon.minPurchaseAmount) {
+      return res.status(400).json({ success: false, message: `Minimum purchase of $${coupon.minPurchaseAmount} required` });
+    }
+
+    let discountAmount = 0;
+    if (coupon.type === 'percentage') {
+      discountAmount = (orderTotal * coupon.discount) / 100;
+    } else {
+      discountAmount = coupon.discount;
+    }
+
+    discountAmount = Math.min(discountAmount, orderTotal);
+    const finalAmount = Math.max(0, orderTotal - discountAmount);
+    const isFree = finalAmount === 0;
+
+    res.json({
+      success: true,
+      coupon: {
+        code: coupon.code,
+        discount: coupon.discount,
+        type: coupon.type,
+        discountAmount: discountAmount,
+        finalAmount: finalAmount,
+        isFree: isFree
+      },
+      message: isFree ? '🎉 Order is FREE!' : `✅ Saved $${discountAmount.toFixed(2)}`
+    });
+
+  } catch (error) {
+    console.error('❌ Validate coupon error:', error);
+    res.status(500).json({ success: false, message: 'Validation failed' });
+  }
+});
+
+app.post('/api/coupons/seed', async (req, res) => {
+  try {
+    const defaultCoupons = [
+      { code: 'WELCOME10', discount: 10, type: 'percentage', isActive: true, description: 'Welcome bonus - 10% off' },
+      { code: 'SAVE20', discount: 20, type: 'percentage', isActive: true, description: 'Save 20% on your order' },
+      { code: 'FLAT50', discount: 50, type: 'fixed', isActive: true, description: '$50 off your purchase' },
+      { code: 'NEWUSER', discount: 15, type: 'percentage', isActive: true, description: 'New user discount' },
+      { code: 'FREE100', discount: 100, type: 'percentage', isActive: true, usageLimit: 50, description: 'Free order - Limited to 50 uses' }
+    ];
+
+    let created = 0;
+    for (const couponData of defaultCoupons) {
+      const existing = await Coupon.findOne({ code: couponData.code });
+      if (!existing) {
+        await Coupon.create(couponData);
+        created++;
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Seeded ${created} coupons`,
+      coupons: defaultCoupons.map(c => c.code)
+    });
+  } catch (error) {
+    console.error('❌ Seed coupons error:', error);
+    res.status(500).json({ success: false, message: 'Seed failed' });
+  }
+});
+
+console.log('✅ Part 4 loaded: Download Links, Products & Coupons configured');
+
+// ========== END OF PART 4 ==========
+// Continue to Part 5 for Blog Management & System Settings// ========== UYEH TECH SERVER v6.0 - PART 5 OF 6 ==========
+// Blog Management & System Settings
+// COPY THIS AFTER PART 4
+
+// ========== BLOG MANAGEMENT ==========
+app.get('/api/admin/blog/posts', authenticateAdmin, async (req, res) => {
+  try {
+    const { status = 'all', category = 'all' } = req.query;
+    
+    let query = {};
+    
+    if (status && status !== 'all') {
+      query.status = status;
+    }
+    
+    if (category && category !== 'all') {
+      query.category = category;
+    }
+
+    const posts = await BlogPost.find(query)
+      .populate('author', 'fullName email')
+      .sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      posts: posts,
+      count: posts.length
+    });
+  } catch (error) {
+    console.error('❌ Get posts error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch posts' });
+  }
+});
+
+app.post('/api/admin/blog/posts', authenticateAdmin, async (req, res) => {
+  try {
+    const { title, excerpt, content, featuredImage, category, tags, status, metaTitle, metaDescription, metaKeywords } = req.body;
+
+    if (!title || !excerpt || !content || !category) {
+      return res.status(400).json({ success: false, message: 'Missing required fields' });
+    }
+
+    const slug = generateSlug(title);
+    const existing = await BlogPost.findOne({ slug });
+    
+    if (existing) {
+      return res.status(400).json({ success: false, message: 'Post with this title exists' });
+    }
+
+    const blogPost = new BlogPost({
+      title,
+      slug,
+      excerpt,
+      content,
+      featuredImage: featuredImage || '',
+      author: req.user.userId,
+      category,
+      tags: tags || [],
+      status: status || 'draft',
+      metaTitle: metaTitle || title,
+      metaDescription: metaDescription || excerpt,
+      metaKeywords: metaKeywords || []
+    });
+
+    await blogPost.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Blog post created',
+      post: blogPost
+    });
+  } catch (error) {
+    console.error('❌ Create post error:', error);
+    res.status(500).json({ success: false, message: 'Creation failed' });
+  }
+});
+
+app.put('/api/admin/blog/posts/:id', authenticateAdmin, async (req, res) => {
+  try {
+    const post = await BlogPost.findById(req.params.id);
+    if (!post) {
+      return res.status(404).json({ success: false, message: 'Post not found' });
+    }
+
+    const allowedUpdates = ['title', 'excerpt', 'content', 'featuredImage', 'category', 'tags', 'status', 'metaTitle', 'metaDescription', 'metaKeywords'];
+    
+    allowedUpdates.forEach(field => {
+      if (req.body[field] !== undefined) {
+        post[field] = req.body[field];
+      }
+    });
+
+    if (req.body.title && req.body.title !== post.title) {
+      post.slug = generateSlug(req.body.title);
+    }
+
+    await post.save();
+
+    res.json({
+      success: true,
+      message: 'Post updated',
+      post: post
+    });
+  } catch (error) {
+    console.error('❌ Update post error:', error);
+    res.status(500).json({ success: false, message: 'Update failed' });
+  }
+});
+
+app.delete('/api/admin/blog/posts/:id', authenticateAdmin, async (req, res) => {
+  try {
+    const post = await BlogPost.findByIdAndDelete(req.params.id);
+    if (!post) {
+      return res.status(404).json({ success: false, message: 'Post not found' });
+    }
+
+    res.json({ success: true, message: 'Post deleted' });
+  } catch (error) {
+    console.error('❌ Delete post error:', error);
+    res.status(500).json({ success: false, message: 'Delete failed' });
+  }
+});
+
+app.get('/api/blog/posts', async (req, res) => {
+  try {
+    const { limit = 10, skip = 0, category = 'all' } = req.query;
+
+    let query = { status: 'published' };
+    if (category && category !== 'all') {
+      query.category = category;
+    }
+
+    const posts = await BlogPost.find(query)
+      .populate('author', 'fullName profileImage')
+      .sort({ publishedAt: -1 })
+      .limit(parseInt(limit))
+      .skip(parseInt(skip))
+      .select('-content');
+
+    const total = await BlogPost.countDocuments(query);
+
+    res.json({
+      success: true,
+      posts: posts,
+      count: posts.length,
+      total: total
+    });
+  } catch (error) {
+    console.error('❌ Get published posts error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch posts' });
+  }
+});
+
+app.get('/api/blog/posts/:slug', async (req, res) => {
+  try {
+    const post = await BlogPost.findOne({ slug: req.params.slug })
+      .populate('author', 'fullName profileImage bio');
+
+    if (!post || post.status !== 'published') {
+      return res.status(404).json({ success: false, message: 'Post not found' });
+    }
+
+    post.views += 1;
+    await post.save();
+
+    res.json({
+      success: true,
+      post: post
+    });
+  } catch (error) {
+    console.error('❌ Get post error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch post' });
+  }
+});
+
+app.post('/api/blog/posts/:id/like', authenticateToken, async (req, res) => {
+  try {
+    const post = await BlogPost.findById(req.params.id);
+    if (!post) {
+      return res.status(404).json({ success: false, message: 'Post not found' });
+    }
+
+    post.likes += 1;
+    await post.save();
+
+    res.json({
+      success: true,
+      likes: post.likes
+    });
+  } catch (error) {
+    console.error('❌ Like post error:', error);
+    res.status(500).json({ success: false, message: 'Like failed' });
+  }
+});
+
+app.post('/api/blog/posts/:id/comments', authenticateToken, async (req, res) => {
+  try {
+    const { comment } = req.body;
+    
+    const post = await BlogPost.findById(req.params.id);
+    if (!post) {
+      return res.status(404).json({ success: false, message: 'Post not found' });
+    }
+
+    const user = await User.findById(req.user.userId);
+    
+    post.comments.push({
+      user: user._id,
+      userName: user.fullName,
+      userEmail: user.email,
+      comment: comment,
+      approved: false
+    });
+
+    await post.save();
+
+    res.json({
+      success: true,
+      message: 'Comment added (pending approval)',
+      comments: post.comments
+    });
+  } catch (error) {
+    console.error('❌ Add comment error:', error);
+    res.status(500).json({ success: false, message: 'Comment failed' });
+  }
+});
+
+app.put('/api/admin/blog/posts/:postId/comments/:commentId/approve', authenticateAdmin, async (req, res) => {
+  try {
+    const post = await BlogPost.findById(req.params.postId);
+    if (!post) {
+      return res.status(404).json({ success: false, message: 'Post not found' });
+    }
+
+    const comment = post.comments.id(req.params.commentId);
+    if (!comment) {
+      return res.status(404).json({ success: false, message: 'Comment not found' });
+    }
+
+    comment.approved = true;
+    await post.save();
+
+    res.json({
+      success: true,
+      message: 'Comment approved'
+    });
+  } catch (error) {
+    console.error('❌ Approve comment error:', error);
+    res.status(500).json({ success: false, message: 'Approval failed' });
+  }
+});
+
+app.get('/api/blog/categories', async (req, res) => {
+  try {
+    const categories = await BlogPost.aggregate([
+      { $match: { status: 'published' } },
+      { $group: { _id: '$category', count: { $sum: 1 } } },
+      { $sort: { count: -1 } }
+    ]);
+
+    res.json({
+      success: true,
+      categories: categories.map(c => ({
+        name: c._id,
+        count: c.count
+      }))
+    });
+  } catch (error) {
+    console.error('❌ Get categories error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch categories' });
+  }
+});
+
+app.get('/api/blog/search', async (req, res) => {
+  try {
+    const query = req.query.q;
+    if (!query) {
+      return res.status(400).json({ success: false, message: 'Search query required' });
+    }
+
+    const posts = await BlogPost.find({
+      status: 'published',
+      $or: [
+        { title: { $regex: query, $options: 'i' } },
+        { excerpt: { $regex: query, $options: 'i' } },
+        { content: { $regex: query, $options: 'i' } },
+        { tags: { $regex: query, $options: 'i' } }
+      ]
+    })
+    .populate('author', 'fullName')
+    .sort({ publishedAt: -1 })
+    .limit(20)
+    .select('-content');
+
+    res.json({
+      success: true,
+      posts: posts,
+      count: posts.length
+    });
+  } catch (error) {
+    console.error('❌ Search posts error:', error);
+    res.status(500).json({ success: false, message: 'Search failed' });
+  }
+});
+
+app.get('/api/blog/featured', async (req, res) => {
+  try {
+    const posts = await BlogPost.find({ status: 'published' })
+      .populate('author', 'fullName profileImage')
+      .sort({ views: -1, likes: -1 })
+      .limit(5)
+      .select('-content');
+
+    res.json({
+      success: true,
+      posts: posts
+    });
+  } catch (error) {
+    console.error('❌ Get featured posts error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch featured posts' });
+  }
+});
 
 // ════════════════════════════════════════════════════════════════════════════
 // 💬 CUSTOMER CHAT ENDPOINTS
@@ -2271,7 +3674,7 @@ global.app.post('/api/chat/:chatId/send', async (req, res) => {
   }
 });
 
-global.app.post('/api/chat/upload', global.upload.array('files', 5), async (req, res) => {
+global.app.post('/api/chat/upload', upload.array('files', 5), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ success: false, message: 'No files uploaded' });
@@ -2297,6 +3700,47 @@ global.app.post('/api/chat/upload', global.upload.array('files', 5), async (req,
   }
 });
 
+
+app.post('/api/chat/:chatId/read', async (req, res) => {
+  try {
+    const { chatId } = req.params;
+    const { messageIds } = req.body;
+
+    if (!messageIds || !Array.isArray(messageIds)) {
+      return res.status(400).json({ success: false, message: 'Message IDs array required' });
+    }
+
+    const chat = await Chat.findOne({ chatId });
+    if (!chat) {
+      return res.status(404).json({ success: false, message: 'Chat session not found' });
+    }
+
+    let markedCount = 0;
+    chat.messages.forEach(msg => {
+      if (messageIds.includes(msg.messageId) && !msg.read) {
+        msg.read = true;
+        markedCount++;
+      }
+    });
+
+    await chat.save();
+
+    // Broadcast via WebSocket
+    broadcastToChat(chatId, {
+      type: 'messages_read',
+      messageIds: messageIds,
+      chatId: chatId
+    });
+
+    res.json({ 
+      success: true, 
+      message: `${markedCount} message(s) marked as read` 
+    });
+  } catch (error) {
+    console.error('❌ Mark read error:', error);
+    res.status(500).json({ success: false, message: 'Failed to mark messages as read' });
+  }
+});
 global.app.post('/api/chat/:chatId/end', async (req, res) => {
   try {
     const { chatId } = req.params;
@@ -2369,11 +3813,58 @@ global.app.post('/api/chat/:chatId/end', async (req, res) => {
   }
 });
 
+// Resolve Chat (Mark as resolved before closing)
+app.post('/api/chat/:chatId/resolve', async (req, res) => {
+  try {
+    const { chatId } = req.params;
+
+    const chat = await Chat.findOne({ chatId });
+    if (!chat) {
+      return res.status(404).json({ success: false, message: 'Chat session not found' });
+    }
+
+    if (chat.status === 'closed') {
+      return res.status(400).json({ success: false, message: 'Chat session already closed' });
+    }
+
+    chat.status = 'resolved';
+    chat.resolvedAt = new Date();
+    
+    chat.messages.push({
+      messageId: generateMessageId(),
+      sender: 'system',
+      senderId: 'system',
+      senderName: 'System',
+      message: 'Issue resolved.',
+      timestamp: new Date()
+    });
+
+    await chat.save();
+
+    // Broadcast via WebSocket
+    broadcastToChat(chatId, {
+      type: 'chat_resolved',
+      chatId: chatId
+    });
+
+    console.log(`✅ Chat resolved: ${chatId}`);
+
+    res.json({
+      success: true,
+      message: 'Chat marked as resolved'
+    });
+  } catch (error) {
+    console.error('❌ Resolve chat error:', error);
+    res.status(500).json({ success: false, message: 'Failed to resolve chat' });
+  }
+});
+
+
 // ════════════════════════════════════════════════════════════════════════════
 // 👨‍💼 AGENT DASHBOARD ENDPOINTS
 // ════════════════════════════════════════════════════════════════════════════
 
-global.app.get('/api/agent/chats', global.authenticateAgent, async (req, res) => {
+global.app.get('/api/agent/chats', authenticateAgent, async (req, res) => {
   try {
     const { status, department, priority, page = 1, limit = 20 } = req.query;
     
@@ -2434,7 +3925,7 @@ global.app.get('/api/agent/chats', global.authenticateAgent, async (req, res) =>
 });
 
 // 🔧 FIXED: Agents can now assign chats to themselves when online
-global.app.post('/api/agent/chats/:chatId/assign', global.authenticateAgent, async (req, res) => {
+global.app.post('/api/agent/chats/:chatId/assign', authenticateAgent, async (req, res) => {
   try {
     const { chatId } = req.params;
     const { agentId } = req.body;
@@ -2551,7 +4042,7 @@ global.app.post('/api/agent/chats/:chatId/assign', global.authenticateAgent, asy
   }
 });
 
-global.app.put('/api/agent/status', global.authenticateAgent, async (req, res) => {
+global.app.put('/api/agent/status', authenticateAgent, async (req, res) => {
   try {
     const { status } = req.body;
 
@@ -2581,7 +4072,7 @@ global.app.put('/api/agent/status', global.authenticateAgent, async (req, res) =
   }
 });
 
-global.app.get('/api/agent/stats', global.authenticateAgent, async (req, res) => {
+global.app.get('/api/agent/stats', authenticateAgent, async (req, res) => {
   try {
     const agentId = req.agentUser._id;
 
@@ -2640,19 +4131,211 @@ console.log('✅ Part 7/8 Loaded: Chat System & Agent Dashboard Ready');
 console.log('💬 Routes: Customer Chat, Agent Dashboard, Self-Assignment (FIXED)\n');
 
 // ════════════════════════════════════════════════════════════════════════════
-// END OF PART 7 - Continue to Part 8 for Server Startup & Final Routes
-// ════════════════════════════════════════════════════════════════════════════// ════════════════════════════════════════════════════════════════════════════
-// 🚀 UYEH TECH BACKEND SERVER v7.0 - PART 8 OF 8 (FINAL)
-// ════════════════════════════════════════════════════════════════════════════
-// 🎉 Server Startup, Error Handling & Complete Documentation
-// COPY THIS AFTER PART 7 - THIS COMPLETES THE SERVER!
-// ════════════════════════════════════════════════════════════════════════════
+
+// Update Agent Settings (Admin)
+app.put('/api/admin/agents/:agentId', authenticateAdmin, async (req, res) => {
+  try {
+    const { department, maxChats, status } = req.body;
+
+    const agent = await User.findById(req.params.agentId);
+    if (!agent || !agent.isAgent) {
+      return res.status(404).json({ success: false, message: 'Agent not found' });
+    }
+
+    if (department) agent.agentInfo.department = department;
+    if (maxChats !== undefined) agent.agentInfo.maxChats = maxChats;
+    if (status) agent.agentInfo.status = status;
+
+    await agent.save();
+
+    console.log(`⚙️  Agent ${agent.fullName} settings updated`);
+
+    res.json({
+      success: true,
+      message: 'Agent settings updated successfully',
+      agent: {
+        id: agent._id,
+        name: agent.fullName,
+        department: agent.agentInfo.department,
+        maxChats: agent.agentInfo.maxChats,
+        status: agent.agentInfo.status
+      }
+    });
+  } catch (error) {
+    console.error('❌ Update agent error:', error);
+    res.status(500).json({ success: false, message: 'Failed to update agent settings' });
+  }
+});
+
+console.log('\n Loaded: Chat System & Support Tickets Ready');
+console.log('💬 Endpoints: Customer Chat, Agent Dashboard, File Upload, Real-time Updates\n');
+
+
+// ========== SYSTEM SETTINGS ==========
+app.get('/api/admin/settings', authenticateAdmin, async (req, res) => {
+  try {
+    let settings = await SystemSettings.findOne();
+    
+    if (!settings) {
+      settings = new SystemSettings({
+        siteName: 'UYEH TECH',
+        contactEmail: 'contact@uyehtech.com',
+        supportEmail: 'support@uyehtech.com',
+        allowRegistration: true,
+        requireEmailVerification: true
+      });
+      await settings.save();
+    }
+
+    res.json({
+      success: true,
+      settings: settings
+    });
+  } catch (error) {
+    console.error('❌ Get settings error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch settings' });
+  }
+});
+
+app.put('/api/admin/settings', authenticateAdmin, async (req, res) => {
+  try {
+    let settings = await SystemSettings.findOne();
+    
+    if (!settings) {
+      settings = new SystemSettings();
+    }
+
+    Object.assign(settings, req.body);
+    settings.updatedAt = Date.now();
+    await settings.save();
+
+    res.json({
+      success: true,
+      message: 'Settings updated successfully',
+      settings: settings
+    });
+  } catch (error) {
+    console.error('❌ Update settings error:', error);
+    res.status(500).json({ success: false, message: 'Update failed' });
+  }
+});
+
+app.get('/api/settings/public', async (req, res) => {
+  try {
+    const settings = await SystemSettings.findOne();
+    
+    res.json({
+      success: true,
+      settings: {
+        siteName: settings?.siteName || 'UYEH TECH',
+        siteDescription: settings?.siteDescription || '',
+        contactEmail: settings?.contactEmail || '',
+        phone: settings?.phone || '',
+        socialMedia: settings?.socialMedia || {},
+        maintenanceMode: settings?.maintenanceMode || false,
+        maintenanceMessage: settings?.maintenanceMessage || '',
+        allowRegistration: settings?.allowRegistration || true
+      }
+    });
+  } catch (error) {
+    res.json({
+      success: true,
+      settings: {
+        siteName: 'UYEH TECH',
+        allowRegistration: true
+      }
+    });
+  }
+});
+
+// ========== NOTIFICATION PREFERENCES ==========
+app.get('/api/user/notifications', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId);
+    res.json({
+      success: true,
+      preferences: user.notificationPreferences || {
+        email: true,
+        orders: true,
+        marketing: false
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to fetch preferences' });
+  }
+});
+
+app.put('/api/user/notifications/update', authenticateToken, async (req, res) => {
+  try {
+    const { email, orders, marketing } = req.body;
+    const user = await User.findById(req.user.userId);
+
+    if (!user.notificationPreferences) {
+      user.notificationPreferences = { email: true, orders: true, marketing: false };
+    }
+
+    if (email !== undefined) user.notificationPreferences.email = email;
+    if (orders !== undefined) user.notificationPreferences.orders = orders;
+    if (marketing !== undefined) user.notificationPreferences.marketing = marketing;
+
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Preferences updated',
+      preferences: user.notificationPreferences
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Update failed' });
+  }
+});
+
+// ========== PAYMENT METHODS ==========
+app.get('/api/user/payment-methods', authenticateToken, async (req, res) => {
+  try {
+    const methods = await PaymentMethod.find({ userId: req.user.userId }).sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      methods: methods
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to fetch methods' });
+  }
+});
+
+app.post('/api/user/payment-methods/add', authenticateToken, async (req, res) => {
+  try {
+    const { type, lastFour, expiry, cardholderName, isDefault } = req.body;
+
+    if (isDefault) {
+      await PaymentMethod.updateMany({ userId: req.user.userId }, { $set: { isDefault: false } });
+    }
+
+    const paymentMethod = new PaymentMethod({
+      userId: req.user.userId,
+      type,
+      lastFour,
+      expiry,
+      cardholderName,
+      isDefault: isDefault || false
+    });
+
+    await paymentMethod.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Payment method added',
+      method: paymentMethod
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to add method' });
+  }
+});
 
 // ════════════════════════════════════════════════════════════════════════════
 // 🎬 SERVER STARTUP
 // ════════════════════════════════════════════════════════════════════════════
-
-const PORT = process.env.PORT || 3000;
 
 global.server.listen(PORT, () => {
   console.log('\n╔═══════════════════════════════════════════════════════════════════════════╗');
