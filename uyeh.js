@@ -39,11 +39,16 @@ const server = http.createServer(app);
 // WEBSOCKET SETUP FOR REAL-TIME CHAT
 // ═════════════════════════════════════════════════════════════════════════════
 
+// ═════════════════════════════════════════════════════════════════════════════
+// WEBSOCKET SETUP FOR REAL-TIME CHAT
+// ═════════════════════════════════════════════════════════════════════════════
+
 const wss = new WebSocket.Server({ 
   server,
-  path: '/ws',
+  path: '/wss',  // ✅ FIXED: Changed from /ws to /wss to match frontend
   verifyClient: (info) => {
     // Allow all connections - authentication handled in message handler
+    console.log('🔌 WebSocket connection attempt from:', info.origin);
     return true;
   }
 });
@@ -55,45 +60,56 @@ const customerConnections = new Map(); // customerId -> WebSocket connection
 
 // WebSocket connection handler
 wss.on('connection', (ws, req) => {
-  const urlParams = new URLSearchParams(req.url.split('?')[1]);
-  const chatId = urlParams.get('chatId');
-  const agentId = urlParams.get('agentId');
-  const customerId = urlParams.get('customerId');
+  // ✅ FIXED: Better URL parsing
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const chatId = url.searchParams.get('chatId');
+  const agentId = url.searchParams.get('agentId');
+  const customerId = url.searchParams.get('customerId');
+  const token = url.searchParams.get('token');
   
-  console.log(`\n🔌 WebSocket Connection:`);
+  console.log(`\n🔌 WebSocket Connection Established:`);
+  console.log(`   URL: ${req.url}`);
   console.log(`   Chat ID: ${chatId || 'N/A'}`);
   console.log(`   Agent ID: ${agentId || 'N/A'}`);
   console.log(`   Customer ID: ${customerId || 'N/A'}`);
+  console.log(`   Token: ${token ? 'Provided' : 'N/A'}`);
+  console.log(`   Total Connections: ${wss.clients.size}`);
   
-  // Store connection
+  // Store connection metadata
+  ws.isAlive = true;
+  ws.chatId = chatId;
+  ws.agentId = agentId;
+  ws.customerId = customerId;
+  ws.connectedAt = new Date();
+  
+  // Store connection in appropriate map
   if (chatId) {
     if (!activeConnections.has(chatId)) {
       activeConnections.set(chatId, new Set());
     }
     activeConnections.get(chatId).add(ws);
+    console.log(`   ✅ Added to chat: ${chatId}`);
   }
   
   if (agentId) {
     agentConnections.set(agentId, ws);
+    console.log(`   ✅ Registered agent: ${agentId}`);
   }
   
   if (customerId) {
     customerConnections.set(customerId, ws);
+    console.log(`   ✅ Registered customer: ${customerId}`);
   }
-  
-  ws.isAlive = true;
-  ws.chatId = chatId;
-  ws.agentId = agentId;
-  ws.customerId = customerId;
   
   // Send welcome message
   ws.send(JSON.stringify({
     type: 'connected',
     message: 'Connected to UYEH TECH Support',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    connectionId: Math.random().toString(36).substr(2, 9)
   }));
   
-  // Handle pong
+  // Handle pong responses
   ws.on('pong', () => {
     ws.isAlive = true;
   });
@@ -102,23 +118,30 @@ wss.on('connection', (ws, req) => {
   ws.on('message', (message) => {
     try {
       const data = JSON.parse(message);
-      console.log(`📨 WebSocket Message:`, data.type);
+      console.log(`📨 WebSocket Message Received:`, {
+        type: data.type,
+        from: agentId || customerId || chatId || 'unknown'
+      });
       
-      // Handle different message types
       handleWebSocketMessage(ws, data);
     } catch (error) {
-      console.error('❌ WebSocket message error:', error);
+      console.error('❌ WebSocket message parse error:', error);
       ws.send(JSON.stringify({
         type: 'error',
-        message: 'Invalid message format'
+        message: 'Invalid message format',
+        error: error.message
       }));
     }
   });
   
   // Handle disconnection
-  ws.on('close', () => {
+  ws.on('close', (code, reason) => {
     console.log(`\n🔌 WebSocket Disconnected:`);
     console.log(`   Chat ID: ${chatId || 'N/A'}`);
+    console.log(`   Agent ID: ${agentId || 'N/A'}`);
+    console.log(`   Code: ${code}`);
+    console.log(`   Reason: ${reason || 'No reason provided'}`);
+    console.log(`   Remaining Connections: ${wss.clients.size - 1}`);
     
     // Remove from active connections
     if (chatId && activeConnections.has(chatId)) {
@@ -139,23 +162,136 @@ wss.on('connection', (ws, req) => {
   
   ws.on('error', (error) => {
     console.error('❌ WebSocket error:', error);
+    console.error('   Connection details:', {
+      chatId,
+      agentId,
+      customerId,
+      readyState: ws.readyState
+    });
   });
 });
 
-// Heartbeat to keep connections alive
+// Heartbeat to keep connections alive - Every 30 seconds
 const heartbeatInterval = setInterval(() => {
+  console.log(`\n💓 WebSocket Heartbeat - Active connections: ${wss.clients.size}`);
+  
   wss.clients.forEach((ws) => {
     if (ws.isAlive === false) {
+      console.log('   ❌ Terminating dead connection');
       return ws.terminate();
     }
+    
     ws.isAlive = false;
     ws.ping();
   });
-}, 30000); // 30 seconds
+}, 30000);
 
 wss.on('close', () => {
+  console.log('🔌 WebSocket Server closing...');
   clearInterval(heartbeatInterval);
 });
+
+// Helper function to broadcast to chat
+function broadcastToChat(chatId, message, excludeWs = null) {
+  if (activeConnections.has(chatId)) {
+    const connections = activeConnections.get(chatId);
+    let sentCount = 0;
+    
+    connections.forEach((clientWs) => {
+      if (clientWs !== excludeWs && clientWs.readyState === WebSocket.OPEN) {
+        clientWs.send(JSON.stringify(message));
+        sentCount++;
+      }
+    });
+    
+    console.log(`📢 Broadcast to chat ${chatId}: ${sentCount} recipient(s)`);
+  } else {
+    console.log(`⚠️  No active connections for chat ${chatId}`);
+  }
+}
+
+// Helper function to send to specific agent
+function sendToAgent(agentId, message) {
+  const agentWs = agentConnections.get(agentId);
+  if (agentWs && agentWs.readyState === WebSocket.OPEN) {
+    agentWs.send(JSON.stringify(message));
+    console.log(`📤 Sent to agent ${agentId}`);
+    return true;
+  } else {
+    console.log(`⚠️  Agent ${agentId} not connected`);
+    return false;
+  }
+}
+
+// Helper function to send to specific customer
+function sendToCustomer(customerId, message) {
+  const customerWs = customerConnections.get(customerId);
+  if (customerWs && customerWs.readyState === WebSocket.OPEN) {
+    customerWs.send(JSON.stringify(message));
+    console.log(`📤 Sent to customer ${customerId}`);
+    return true;
+  } else {
+    console.log(`⚠️  Customer ${customerId} not connected`);
+    return false;
+  }
+}
+
+// Handle WebSocket messages
+function handleWebSocketMessage(ws, data) {
+  switch (data.type) {
+    case 'ping':
+      ws.send(JSON.stringify({ 
+        type: 'pong', 
+        timestamp: new Date().toISOString() 
+      }));
+      break;
+      
+    case 'typing':
+      if (ws.chatId) {
+        broadcastToChat(ws.chatId, {
+          type: 'typing',
+          userId: data.userId || ws.customerId || ws.agentId,
+          isTyping: data.isTyping
+        }, ws);
+      }
+      break;
+      
+    case 'join_chat':
+      console.log(`👤 User joining chat: ${data.chatId}`);
+      ws.chatId = data.chatId;
+      if (!activeConnections.has(data.chatId)) {
+        activeConnections.set(data.chatId, new Set());
+      }
+      activeConnections.get(data.chatId).add(ws);
+      ws.send(JSON.stringify({
+        type: 'joined_chat',
+        chatId: data.chatId,
+        message: 'Successfully joined chat'
+      }));
+      break;
+      
+    case 'leave_chat':
+      if (ws.chatId && activeConnections.has(ws.chatId)) {
+        activeConnections.get(ws.chatId).delete(ws);
+        if (activeConnections.get(ws.chatId).size === 0) {
+          activeConnections.delete(ws.chatId);
+        }
+      }
+      ws.send(JSON.stringify({
+        type: 'left_chat',
+        chatId: ws.chatId
+      }));
+      ws.chatId = null;
+      break;
+      
+    default:
+      console.log(`⚠️  Unhandled message type: ${data.type}`);
+      ws.send(JSON.stringify({
+        type: 'unknown_type',
+        message: `Message type '${data.type}' not recognized`
+      }));
+  }
+}
 
 // Helper function to broadcast to chat
 function broadcastToChat(chatId, message, excludeWs = null) {
