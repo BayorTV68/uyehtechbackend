@@ -76,11 +76,11 @@ wss.on('connection', (ws, req) => {
   console.log(`   Total Connections: ${wss.clients.size}`);
   
   // Store connection metadata
-  ws.isAlive = true;
-  ws.chatId = chatId;
-  ws.agentId = agentId;
-  ws.customerId = customerId;
-  ws.connectedAt = new Date();
+  wss.isAlive = true;
+  wss.chatId = chatId;
+  wss.agentId = agentId;
+  wss.customerId = customerId;
+  wss.connectedAt = new Date();
   
   // Store connection in appropriate map
   if (chatId) {
@@ -171,6 +171,22 @@ wss.on('connection', (ws, req) => {
   });
 });
 
+
+// ✅ Performance monitoring middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    
+    // Log slow requests (> 1 second)
+    if (duration > 1000) {
+      console.warn(`⚠️  SLOW REQUEST: ${req.method} ${req.path} - ${duration}ms`);
+    }
+  });
+  
+  next();
+});
 // Heartbeat to keep connections alive - Every 30 seconds
 const heartbeatInterval = setInterval(() => {
   console.log(`\n💓 WebSocket Heartbeat - Active connections: ${wss.clients.size}`);
@@ -191,24 +207,7 @@ wss.on('close', () => {
   clearInterval(heartbeatInterval);
 });
 
-// Helper function to broadcast to chat
-function broadcastToChat(chatId, message, excludeWs = null) {
-  if (activeConnections.has(chatId)) {
-    const connections = activeConnections.get(chatId);
-    let sentCount = 0;
-    
-    connections.forEach((clientWs) => {
-      if (clientWs !== excludeWs && clientWs.readyState === WebSocket.OPEN) {
-        clientWs.send(JSON.stringify(message));
-        sentCount++;
-      }
-    });
-    
-    console.log(`📢 Broadcast to chat ${chatId}: ${sentCount} recipient(s)`);
-  } else {
-    console.log(`⚠️  No active connections for chat ${chatId}`);
-  }
-}
+// Helper function to broadcast to chat 2
 
 // Helper function to send to specific agent
 function sendToAgent(agentId, message) {
@@ -482,6 +481,17 @@ mongoose.connection.on('reconnected', () => {
 });
 
 
+// Call this after MongoDB connection
+mongoose.connect(MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+}).then(() => {
+  console.log('✅ MongoDB Connected Successfully');
+  createDatabaseIndexes(); // ✅ Add this line
+}).catch(err => {
+  console.error('❌ MongoDB Connection Error:', err.message);
+  process.exit(1);
+});
 // ═════════════════════════════════════════════════════════════════════════════
 // DATABASE SCHEMAS
 // ═════════════════════════════════════════════════════════════════════════════
@@ -543,6 +553,49 @@ userSchema.index({ createdAt: -1 });
 
 const User = mongoose.model('User', userSchema);
 
+// Add this schema definition around line 250 (after Chat schema)
+
+const supportTicketSchema = new mongoose.Schema({
+  ticketId: { type: String, required: true, unique: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  assignedAgent: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  subject: { type: String, required: true },
+  description: { type: String, required: true },
+  priority: { type: String, enum: ['low', 'medium', 'high', 'urgent'], default: 'medium' },
+  category: { type: String, default: 'General' },
+  status: { type: String, enum: ['open', 'in-progress', 'resolved', 'closed'], default: 'open' },
+  messages: [{
+    sender: { type: String, enum: ['customer', 'agent', 'system'], required: true },
+    senderId: String,
+    senderName: String,
+    message: String,
+    timestamp: { type: Date, default: Date.now }
+  }],
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now },
+  resolvedAt: Date
+});
+
+supportTicketSchema.pre('save', function(next) {
+  this.updatedAt = Date.now();
+  next();
+});
+
+const SupportTicket = mongoose.model('SupportTicket', supportTicketSchema);
+
+// ✅ Create compound indexes for better query performance
+async function createDatabaseIndexes() {
+  try {
+    await Chat.collection.createIndex({ chatId: 1, status: 1 });
+    await Chat.collection.createIndex({ assignedAgent: 1, status: 1 });
+    await Chat.collection.createIndex({ customerId: 1, createdAt: -1 });
+    await User.collection.createIndex({ email: 1, isAgent: 1 });
+    
+    console.log('✅ Database indexes created successfully');
+  } catch (error) {
+    console.error('❌ Index creation error:', error);
+  }
+}
 
 
 // ========== ORDER SCHEMA ==========
@@ -889,6 +942,8 @@ global.sendToCustomer = sendToCustomer;
 global.activeConnections = activeConnections;
 global.agentConnections = agentConnections;
 global.customerConnections = customerConnections;
+global.SupportTicket = SupportTicket;
+
 
 // Utility functions
 global.generateToken = generateToken;
@@ -2114,7 +2169,7 @@ app.post('/api/chat/:chatId/end', async (req, res) => {
 
     await chat.save();
 
-    // Broadcast via WebSocket
+    // Broadcast via WebSocket option 1
     broadcastToChat(chatId, {
       type: 'chat_closed',
       chatId: chatId,
@@ -2135,6 +2190,43 @@ app.post('/api/chat/:chatId/end', async (req, res) => {
     res.status(500).json({ success: false, message: 'Failed to end chat session' });
   }
 });
+
+// ✅ Simple in-memory cache for recent messages
+const messageCache = new Map();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+function cacheMessage(chatId, message) {
+  if (!messageCache.has(chatId)) {
+    messageCache.set(chatId, []);
+  }
+  
+  const messages = messageCache.get(chatId);
+  messages.push({
+    message,
+    timestamp: Date.now()
+  });
+  
+  // Keep only last 50 messages
+  if (messages.length > 50) {
+    messages.shift();
+  }
+  
+  // Auto-clear old cache entries
+  setTimeout(() => {
+    messageCache.delete(chatId);
+  }, CACHE_TTL);
+}
+
+function getCachedMessages(chatId) {
+  const cached = messageCache.get(chatId);
+  if (!cached) return null;
+  
+  const now = Date.now();
+  return cached
+    .filter(item => (now - item.timestamp) < CACHE_TTL)
+    .map(item => item.message);
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // AGENT DASHBOARD ENDPOINTS
 // ═════════════════════════════════════════════════════════════════════════════
@@ -2142,14 +2234,15 @@ app.post('/api/chat/:chatId/end', async (req, res) => {
 // Get All Chats (Agent/Admin)
 app.get('/api/agent/chats', authenticateAgent, async (req, res) => {
   try {
-    const { status, department, priority, page = 1, limit = 20 } = req.query;
+    const { 
+      status, 
+      department, 
+      priority, 
+      page = 1,      // ✅ Add pagination
+      limit = 20     // ✅ Add limit
+    } = req.query;
     
     let query = {};
-    
-    // If not admin, only show assigned chats
-    if (!req.agentUser.isAdmin) {
-      query.assignedAgent = req.agentUser._id;
-    }
     
     if (status && status !== 'all') {
       query.status = status;
@@ -2165,30 +2258,19 @@ app.get('/api/agent/chats', authenticateAgent, async (req, res) => {
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    const chats = await Chat.find(query)
-      .populate('assignedAgent', 'fullName email agentInfo')
-      .sort({ updatedAt: -1 })
-      .limit(parseInt(limit))
-      .skip(skip);
-
-    const total = await Chat.countDocuments(query);
+    const [chats, total] = await Promise.all([
+      global.Chat.find(query)
+        .populate('assignedAgent', 'fullName email agentInfo')
+        .sort({ updatedAt: -1 })
+        .limit(parseInt(limit))
+        .skip(skip)
+        .lean(), // ✅ Use lean() for better performance
+      global.Chat.countDocuments(query)
+    ]);
 
     res.json({
       success: true,
-      chats: chats.map(chat => ({
-        chatId: chat.chatId,
-        customerName: chat.customerName,
-        customerEmail: chat.customerEmail,
-        subject: chat.subject,
-        department: chat.department,
-        priority: chat.priority,
-        status: chat.status,
-        assignedAgent: chat.assignedAgent,
-        totalMessages: chat.totalMessages,
-        unreadCount: chat.messages.filter(m => !m.read && m.sender === 'customer').length,
-        createdAt: chat.createdAt,
-        updatedAt: chat.updatedAt
-      })),
+      chats: normalizeChats(chats),
       pagination: {
         total,
         page: parseInt(page),
@@ -4225,8 +4307,18 @@ app.post('/api/chat/:chatId/send', async (req, res) => {
     }
 
     await chat.save();
+    // ✅ Broadcast message immediately via WebSocket
+broadcastToChat(chatId, {
+  type: 'new_message',
+  message: newMessage,
+  chatId: chatId,
+  timestamp: new Date().toISOString()
+});
 
-    global.broadcastToChat(chatId, {
+console.log(`✅ Message broadcast to chat ${chatId}`);
+
+
+    broadcastToChat(chatId, {
       type: 'new_message',
       message: newMessage,
       chatId: chatId
@@ -4702,6 +4794,139 @@ app.get('/api/agent/stats', authenticateAgent, async (req, res) => {
 console.log('✅ Part 7/8 Loaded: Chat System & Agent Dashboard Ready');
 console.log('💬 Routes: Customer Chat, Agent Dashboard, Self-Assignment (FIXED)\n');
 
+
+// IN SERVER.JS - Add this new endpoint around line 1400
+
+// Analytics Endpoint - Track Chat Metrics
+app.get('/api/agent/analytics', authenticateAgent, async (req, res) => {
+  try {
+    const agentId = req.agentUser._id;
+    const { timeRange = 'week' } = req.query;
+    
+    // Calculate date range
+    const now = new Date();
+    let startDate;
+    
+    switch(timeRange) {
+      case 'today':
+        startDate = new Date(now.setHours(0, 0, 0, 0));
+        break;
+      case 'week':
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        break;
+      case 'month':
+        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        break;
+      default:
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    }
+    
+    // Get agent's chats in timeframe
+    const chats = await Chat.find({
+      assignedAgent: agentId,
+      createdAt: { $gte: startDate }
+    });
+    
+    // Calculate metrics
+    const totalChats = chats.length;
+    const resolvedChats = chats.filter(c => c.status === 'resolved').length;
+    const avgResponseTime = chats.reduce((sum, chat) => {
+      return sum + (chat.firstResponseTime || 0);
+    }, 0) / (chats.filter(c => c.firstResponseTime).length || 1);
+    
+    const totalMessages = chats.reduce((sum, chat) => {
+      return sum + chat.messages.filter(m => m.sender === 'agent').length;
+    }, 0);
+    
+    // Response rate
+    const resolutionRate = totalChats > 0 
+      ? Math.round((resolvedChats / totalChats) * 100) 
+      : 0;
+    
+    res.json({
+      success: true,
+      analytics: {
+        timeRange,
+        totalChats,
+        resolvedChats,
+        resolutionRate: `${resolutionRate}%`,
+        avgResponseTime: `${Math.round(avgResponseTime)}s`,
+        totalMessages
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Analytics error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch analytics' });
+  }
+});
+
+// IN SERVER.JS - Add these endpoints around line 1450
+
+// Create Support Ticket
+app.post('/api/tickets/create', authenticateToken, async (req, res) => {
+  try {
+    const { subject, description, priority, category } = req.body;
+    
+    if (!subject || !description) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Subject and description required' 
+      });
+    }
+    
+    const ticket = new SupportTicket({
+      userId: req.user.userId,
+      subject,
+      description,
+      priority: priority || 'medium',
+      category: category || 'General',
+      status: 'open',
+      ticketId: 'TKT-' + Date.now()
+    });
+    
+    await ticket.save();
+    
+    res.status(201).json({
+      success: true,
+      message: 'Support ticket created',
+      ticket
+    });
+    
+  } catch (error) {
+    console.error('❌ Create ticket error:', error);
+    res.status(500).json({ success: false, message: 'Failed to create ticket' });
+  }
+});
+
+// Get Agent's Tickets
+app.get('/api/agent/tickets', authenticateAgent, async (req, res) => {
+  try {
+    const { status = 'all' } = req.query;
+    
+    let query = { assignedAgent: req.agentUser._id };
+    
+    if (status !== 'all') {
+      query.status = status;
+    }
+    
+    const tickets = await SupportTicket.find(query)
+      .populate('userId', 'fullName email')
+      .sort({ createdAt: -1 })
+      .limit(50);
+    
+    res.json({
+      success: true,
+      tickets,
+      count: tickets.length
+    });
+    
+  } catch (error) {
+    console.error('❌ Get tickets error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch tickets' });
+  }
+});
+
 // ════════════════════════════════════════════════════════════════════════════
 
 // Update Agent Settings (Admin)
@@ -4904,10 +5129,24 @@ app.post('/api/user/payment-methods/add', authenticateToken, async (req, res) =>
     res.status(500).json({ success: false, message: 'Failed to add method' });
   }
 });
+// IN SERVER.JS - Add WebSocket stats endpoint (around line 1650)
 
-// ════════════════════════════════════════════════════════════════════════════
-// 🎬 SERVER STARTUP
-// ════════════════════════════════════════════════════════════════════════════
+app.get('/api/websocket/status', authenticateAdmin, (req, res) => {
+  res.json({
+    success: true,
+    connections: {
+      total: wss.clients.size,
+      activeChats: activeConnections.size,
+      connectedAgents: agentConnections.size,
+      connectedCustomers: customerConnections.size
+    },
+    details: {
+      chats: Array.from(activeConnections.keys()),
+      agents: Array.from(agentConnections.keys()),
+      customers: Array.from(customerConnections.keys())
+    }
+  });
+});
 
 server.listen(PORT, () => {
   console.log('\n╔═══════════════════════════════════════════════════════════════════════════╗');
