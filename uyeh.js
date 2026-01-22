@@ -2267,7 +2267,89 @@ function getCachedMessages(chatId) {
 
 // ═════════════════════════════════════════════════════════════════════════════
 // AGENT DASHBOARD ENDPOINTS
-// ═════════════════════════════════════════════════════════════════════════════
+app.get('/api/agent/chats', authenticateAgent, async (req, res) => {
+  try {
+    const { 
+      status, 
+      department, 
+      priority, 
+      page = 1,
+      limit = 100  // Increased limit to ensure all chats load
+    } = req.query;
+    
+    let query = {};
+    
+    // Filter by status if provided
+    if (status && status !== 'all') {
+      query.status = status;
+    }
+    
+    // Filter by department if provided
+    if (department && department !== 'all') {
+      query.department = department;
+    }
+
+    // Filter by priority if provided
+    if (priority && priority !== 'all') {
+      query.priority = priority;
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    // Fetch chats with full details
+    const [chats, total] = await Promise.all([
+      global.Chat.find(query)
+        .populate('assignedAgent', 'fullName email agentInfo')
+        .sort({ updatedAt: -1 })
+        .limit(parseInt(limit))
+        .skip(skip)
+        .lean(), // Use lean() for better performance
+      global.Chat.countDocuments(query)
+    ]);
+
+    // ✅ CRITICAL: Normalize all chats
+    const normalizedChats = chats.map(chat => ({
+      ...chat,
+      // Ensure chatId is accessible
+      chatId: chat.chatId || chat._id?.toString(),
+      id: chat.chatId || chat._id?.toString(),
+      // Ensure status is lowercase
+      status: (chat.status || 'open').toLowerCase(),
+      // Calculate unread count
+      unreadCount: chat.messages?.filter(m => !m.read && m.sender === 'customer').length || 0,
+      // Get last message
+      lastMessage: chat.messages?.length > 0 
+        ? chat.messages[chat.messages.length - 1].message 
+        : '',
+      lastMessageTime: chat.messages?.length > 0 
+        ? chat.messages[chat.messages.length - 1].timestamp 
+        : chat.createdAt
+    }));
+
+    console.log(`✅ Agent chats fetched: ${normalizedChats.length} total`);
+    console.log(`📊 Status breakdown:`, {
+      open: normalizedChats.filter(c => c.status === 'open').length,
+      assigned: normalizedChats.filter(c => c.status === 'assigned').length,
+      'in-progress': normalizedChats.filter(c => c.status === 'in-progress').length,
+      resolved: normalizedChats.filter(c => c.status === 'resolved').length,
+      closed: normalizedChats.filter(c => c.status === 'closed').length
+    });
+
+    res.json({
+      success: true,
+      chats: normalizedChats,
+      pagination: {
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        pages: Math.ceil(total / parseInt(limit))
+      }
+    });
+  } catch (error) {
+    console.error('❌ Get chats error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch chats' });
+  }
+});// ═════════════════════════════════════════════════════════════════════════════
 
 // Get All Chats (Agent/Admin)
 app.get('/api/agent/chats', authenticateAgent, async (req, res) => {
@@ -2442,63 +2524,6 @@ app.put('/api/agent/status', authenticateAgent, async (req, res) => {
   }
 });
 
-// Get Agent Statistics
-app.get('/api/agent/stats', authenticateAgent, async (req, res) => {
-  try {
-    const agentId = req.agentUser._id;
-
-    const totalChats = await Chat.countDocuments({ assignedAgent: agentId });
-    const openChats = await Chat.countDocuments({ 
-      assignedAgent: agentId, 
-      status: { $in: ['open', 'assigned'] } 
-    });
-    const inProgressChats = await Chat.countDocuments({ 
-      assignedAgent: agentId, 
-      status: 'in-progress' 
-    });
-    const resolvedChats = await Chat.countDocuments({ 
-      assignedAgent: agentId, 
-      status: 'resolved' 
-    });
-    const closedChats = await Chat.countDocuments({ 
-      assignedAgent: agentId, 
-      status: 'closed' 
-    });
-
-    // Calculate average response time
-    const chatsWithResponseTime = await Chat.find({ 
-      assignedAgent: agentId,
-      firstResponseTime: { $exists: true }
-    }).select('firstResponseTime');
-
-    let avgResponseTime = 0;
-    if (chatsWithResponseTime.length > 0) {
-      const total = chatsWithResponseTime.reduce((sum, chat) => sum + chat.firstResponseTime, 0);
-      avgResponseTime = Math.round(total / chatsWithResponseTime.length);
-    }
-
-    // Get agent rating
-    const agent = await User.findById(agentId);
-    const rating = agent.agentInfo?.rating || 0;
-
-    res.json({
-      success: true,
-      stats: {
-        totalChats,
-        openChats,
-        inProgressChats,
-        resolvedChats,
-        closedChats,
-        activeChats: openChats + inProgressChats,
-        avgResponseTime: avgResponseTime, // in minutes
-        rating: rating.toFixed(1)
-      }
-    });
-  } catch (error) {
-    console.error('❌ Get stats error:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch statistics' });
-  }
-});
 
 // Get All Agents (Admin)
 app.get('/api/admin/agents', authenticateAdmin, async (req, res) => {
@@ -4588,43 +4613,258 @@ app.post('/api/chat/start', async (req, res) => {
   }
 });
 
+app.get('/api/agent/dashboard/stats', authenticateAgent, async (req, res) => {
+  try {
+    const agentId = req.agentUser._id;
+    const now = new Date();
+    const today = new Date(now.setHours(0, 0, 0, 0));
+    const thisWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const [
+      totalChats,
+      openChats,
+      assignedChats,
+      inProgressChats,
+      resolvedChats,
+      closedChats,
+      todayChats,
+      weekChats,
+      avgResponseTime,
+      customerSatisfaction
+    ] = await Promise.all([
+      global.Chat.countDocuments({ assignedAgent: agentId }),
+      global.Chat.countDocuments({ status: 'open' }),
+      global.Chat.countDocuments({ assignedAgent: agentId, status: 'assigned' }),
+      global.Chat.countDocuments({ assignedAgent: agentId, status: 'in-progress' }),
+      global.Chat.countDocuments({ assignedAgent: agentId, status: 'resolved' }),
+      global.Chat.countDocuments({ assignedAgent: agentId, status: 'closed' }),
+      global.Chat.countDocuments({ assignedAgent: agentId, createdAt: { $gte: today } }),
+      global.Chat.countDocuments({ assignedAgent: agentId, createdAt: { $gte: thisWeek } }),
+      global.Chat.aggregate([
+        { $match: { assignedAgent: agentId, firstResponseTime: { $exists: true } } },
+        { $group: { _id: null, avg: { $avg: '$firstResponseTime' } } }
+      ]),
+      global.Chat.aggregate([
+        { $match: { assignedAgent: agentId, rating: { $exists: true } } },
+        { $group: { _id: null, avg: { $avg: '$rating' } } }
+      ])
+    ]);
+
+    const resolvedToday = await global.Chat.countDocuments({
+      assignedAgent: agentId,
+      status: 'resolved',
+      resolvedAt: { $gte: today }
+    });
+
+    const avgResponse = avgResponseTime[0]?.avg || 0;
+    const avgRating = customerSatisfaction[0]?.avg || 0;
+    const satisfactionRate = avgRating > 0 ? Math.round((avgRating / 5) * 100) : 0;
+
+    res.json({
+      success: true,
+      stats: {
+        totalChats,
+        openChats,
+        assignedChats,
+        inProgressChats,
+        resolvedChats,
+        closedChats,
+        activeChats: assignedChats + inProgressChats,
+        totalChatsToday: todayChats,
+        totalChatsWeek: weekChats,
+        resolvedToday,
+        avgChatDuration: Math.round(avgResponse),
+        avgResponseTime: Math.round(avgResponse),
+        satisfactionRate,
+        rating: avgRating.toFixed(1)
+      }
+    });
+  } catch (error) {
+    console.error('❌ Dashboard stats error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch dashboard stats' });
+  }
+});
+
+
 app.get('/api/chat/:chatId', async (req, res) => {
   try {
     const { chatId } = req.params;
 
     const chat = await global.Chat.findOne({ chatId })
-      .populate('assignedAgent', 'fullName email agentInfo');
+      .populate('assignedAgent', 'fullName email agentInfo')
+      .lean();
 
     if (!chat) {
       return res.status(404).json({ success: false, message: 'Chat session not found' });
     }
 
+    // ✅ Normalize chat object
+    const normalizedChat = {
+      ...chat,
+      chatId: chat.chatId || chat._id?.toString(),
+      id: chat.chatId || chat._id?.toString(),
+      status: (chat.status || 'open').toLowerCase(),
+      unreadCount: chat.messages?.filter(m => !m.read && m.sender === 'customer').length || 0,
+      lastMessage: chat.messages?.length > 0 
+        ? chat.messages[chat.messages.length - 1].message 
+        : '',
+      lastMessageTime: chat.messages?.length > 0 
+        ? chat.messages[chat.messages.length - 1].timestamp 
+        : chat.createdAt
+    };
+
+    console.log(`✅ Chat loaded: ${chatId}`);
+
     res.json({
       success: true,
-      chat: {
-        chatId: chat.chatId,
-        customerId: chat.customerId,
-        customerName: chat.customerName,
-        customerEmail: chat.customerEmail,
-        subject: chat.subject,
-        department: chat.department,
-        priority: chat.priority,
-        status: chat.status,
-        assignedAgent: chat.assignedAgent,
-        messages: chat.messages,
-        tags: chat.tags,
-        rating: chat.rating,
-        feedback: chat.feedback,
-        createdAt: chat.createdAt,
-        updatedAt: chat.updatedAt,
-        totalMessages: chat.totalMessages
-      }
+      chat: normalizedChat
     });
   } catch (error) {
     console.error('❌ Get chat error:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch chat details' });
   }
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// ✅ FIX #5: Assign Chat Endpoint (Enhanced with Better Validation)
+// Issue: Needs better error handling and validation
+// Location: Replace existing assignment endpoint
+// ════════════════════════════════════════════════════════════════════════════
+
+app.post('/api/agent/chats/:chatId/assign', authenticateAgent, async (req, res) => {
+  try {
+    const { chatId } = req.params;
+    const { agentId } = req.body;
+
+    if (!agentId) {
+      return res.status(400).json({ success: false, message: 'Agent ID required' });
+    }
+
+    const requestingAgentId = req.agentUser._id.toString();
+    const targetAgentId = agentId;
+
+    // ✅ Agents can self-assign OR admins can assign to anyone
+    if (!req.agentUser.isAdmin && requestingAgentId !== targetAgentId) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Agents can only assign chats to themselves' 
+      });
+    }
+
+    const chat = await global.Chat.findOne({ chatId });
+    if (!chat) {
+      return res.status(404).json({ success: false, message: 'Chat session not found' });
+    }
+
+    // ✅ Check if chat is already assigned
+    if (chat.assignedAgent && chat.assignedAgent.toString() !== targetAgentId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'This chat has already been assigned to another agent' 
+      });
+    }
+
+    // ✅ Check if chat is closed
+    if (chat.status === 'closed' || chat.status === 'resolved') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Cannot assign a closed or resolved chat' 
+      });
+    }
+
+    const agent = await global.User.findById(agentId);
+    if (!agent || (!agent.isAgent && !agent.isAdmin)) {
+      return res.status(400).json({ success: false, message: 'Invalid agent ID' });
+    }
+
+    // ✅ Check if agent is online for self-assignment
+    if (requestingAgentId === targetAgentId && agent.agentInfo) {
+      if (agent.agentInfo.status === 'offline') {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'You must be online to assign chats to yourself' 
+        });
+      }
+      
+      if (agent.agentInfo.activeChats >= agent.agentInfo.maxChats) {
+        return res.status(400).json({ 
+          success: false, 
+          message: `You have reached your maximum chat limit (${agent.agentInfo.maxChats})` 
+        });
+      }
+    }
+
+    // Update previous agent stats if chat was already assigned
+    if (chat.assignedAgent && chat.assignedAgent.toString() !== agentId) {
+      const previousAgent = await global.User.findById(chat.assignedAgent);
+      if (previousAgent && previousAgent.agentInfo) {
+        previousAgent.agentInfo.activeChats = Math.max(0, previousAgent.agentInfo.activeChats - 1);
+        await previousAgent.save();
+      }
+    }
+
+    // Assign chat
+    chat.assignedAgent = agentId;
+    chat.status = 'assigned';
+    
+    chat.messages.push({
+      messageId: global.generateMessageId(),
+      sender: 'system',
+      senderId: 'system',
+      senderName: 'System',
+      message: `Chat assigned to agent: ${agent.fullName}`,
+      timestamp: new Date()
+    });
+
+    await chat.save();
+
+    // Update agent stats
+    if (agent.agentInfo) {
+      agent.agentInfo.activeChats = (agent.agentInfo.activeChats || 0) + 1;
+      agent.agentInfo.totalChats = (agent.agentInfo.totalChats || 0) + 1;
+      await agent.save();
+    }
+
+    // Notify agent via WebSocket
+    global.sendToAgent(agentId.toString(), {
+      type: 'chat_assigned',
+      chat: {
+        chatId: chat.chatId,
+        customerName: chat.customerName,
+        subject: chat.subject,
+        department: chat.department,
+        priority: chat.priority
+      }
+    });
+
+    // Send email notification
+    await global.sendAgentAssignmentEmail(agent.email, {
+      chatId: chat.chatId,
+      customerName: chat.customerName,
+      subject: chat.subject,
+      department: chat.department,
+      priority: chat.priority
+    });
+
+    console.log(`✅ Chat ${chatId} assigned to agent ${agent.fullName}`);
+
+    res.json({
+      success: true,
+      message: requestingAgentId === targetAgentId 
+        ? 'Chat successfully assigned to you' 
+        : 'Chat assigned successfully',
+      chat: {
+        chatId: chat.chatId,
+        assignedAgent: agent.fullName,
+        status: chat.status
+      }
+    });
+  } catch (error) {
+    console.error('❌ Assign chat error:', error);
+    res.status(500).json({ success: false, message: 'Failed to assign chat' });
+  }
+});
+
 
 app.post('/api/chat/:chatId/send', async (req, res) => {
   try {
@@ -4866,183 +5106,10 @@ app.post('/api/chat/:chatId/resolve', async (req, res) => {
 // 👨‍💼 AGENT DASHBOARD ENDPOINTS
 // ════════════════════════════════════════════════════════════════════════════
 
-app.get('/api/agent/chats', authenticateAgent, async (req, res) => {
-  try {
-    const { status, department, priority, page = 1, limit = 20 } = req.query;
-    
-    let query = {};
-    
-    // Show ALL chats by default (not just assigned ones)
-    // Agents can filter to see only their chats from the frontend
-    
-    if (status && status !== 'all') {
-      query.status = status;
-    }
-    
-    if (department && department !== 'all') {
-      query.department = department;
-    }
 
-    if (priority && priority !== 'all') {
-      query.priority = priority;
-    }
-
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-
-    const chats = await global.Chat.find(query)
-      .populate('assignedAgent', 'fullName email agentInfo')
-      .sort({ updatedAt: -1 })
-      .limit(parseInt(limit))
-      .skip(skip);
-
-    const total = await global.Chat.countDocuments(query);
-
-    res.json({
-      success: true,
-      chats: chats.map(chat => ({
-        chatId: chat.chatId,
-        customerName: chat.customerName,
-        customerEmail: chat.customerEmail,
-        subject: chat.subject,
-        department: chat.department,
-        priority: chat.priority,
-        status: chat.status,
-        assignedAgent: chat.assignedAgent,
-        totalMessages: chat.totalMessages,
-        unreadCount: chat.messages.filter(m => !m.read && m.sender === 'customer').length,
-        createdAt: chat.createdAt,
-        updatedAt: chat.updatedAt
-      })),
-      pagination: {
-        total,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        pages: Math.ceil(total / parseInt(limit))
-      }
-    });
-  } catch (error) {
-    console.error('❌ Get chats error:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch chats' });
-  }
-});
 
 // 🔧 FIXED: Agents can now assign chats to themselves when online
-app.post('/api/agent/chats/:chatId/assign', authenticateAgent, async (req, res) => {
-  try {
-    const { chatId } = req.params;
-    const { agentId } = req.body;
 
-    if (!agentId) {
-      return res.status(400).json({ success: false, message: 'Agent ID required' });
-    }
-
-    const requestingAgentId = req.agentUser._id.toString();
-    const targetAgentId = agentId;
-
-    // 🔧 FIXED: Agents can now self-assign OR admins can assign to anyone
-    if (!req.agentUser.isAdmin && requestingAgentId !== targetAgentId) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Agents can only assign chats to themselves. Admins can assign to any agent.' 
-      });
-    }
-
-    const chat = await global.Chat.findOne({ chatId });
-    if (!chat) {
-      return res.status(404).json({ success: false, message: 'Chat session not found' });
-    }
-
-    const agent = await global.User.findById(agentId);
-    if (!agent || (!agent.isAgent && !agent.isAdmin)) {
-      return res.status(400).json({ success: false, message: 'Invalid agent ID' });
-    }
-
-    // 🔧 NEW: Check if agent is online for self-assignment
-    if (requestingAgentId === targetAgentId && agent.agentInfo) {
-      if (agent.agentInfo.status === 'offline') {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'You must be online to assign chats to yourself. Please update your status first.' 
-        });
-      }
-      
-      if (agent.agentInfo.activeChats >= agent.agentInfo.maxChats) {
-        return res.status(400).json({ 
-          success: false, 
-          message: `You have reached your maximum chat limit (${agent.agentInfo.maxChats}). Please close some chats first.` 
-        });
-      }
-    }
-
-    // Update previous agent stats if chat was already assigned
-    if (chat.assignedAgent) {
-      const previousAgent = await global.User.findById(chat.assignedAgent);
-      if (previousAgent && previousAgent.agentInfo) {
-        previousAgent.agentInfo.activeChats = Math.max(0, previousAgent.agentInfo.activeChats - 1);
-        await previousAgent.save();
-      }
-    }
-
-    chat.assignedAgent = agentId;
-    chat.status = 'assigned';
-    
-    chat.messages.push({
-      messageId: global.generateMessageId(),
-      sender: 'system',
-      senderId: 'system',
-      senderName: 'System',
-      message: `Chat assigned to agent: ${agent.fullName}`,
-      timestamp: new Date()
-    });
-
-    await chat.save();
-
-    // Update new agent stats
-    if (agent.agentInfo) {
-      agent.agentInfo.activeChats += 1;
-      agent.agentInfo.totalChats += 1;
-      await agent.save();
-    }
-
-    // Notify agent via WebSocket
-    global.sendToAgent(agentId.toString(), {
-      type: 'chat_assigned',
-      chat: {
-        chatId: chat.chatId,
-        customerName: chat.customerName,
-        subject: chat.subject,
-        department: chat.department,
-        priority: chat.priority
-      }
-    });
-
-    // Send email notification
-    await global.sendAgentAssignmentEmail(agent.email, {
-      chatId: chat.chatId,
-      customerName: chat.customerName,
-      subject: chat.subject,
-      department: chat.department,
-      priority: chat.priority
-    });
-
-    console.log(`👨‍💼 Chat ${chatId} assigned to agent ${agent.fullName}`);
-
-    res.json({
-      success: true,
-      message: requestingAgentId === targetAgentId 
-        ? 'Chat successfully assigned to you' 
-        : 'Chat assigned successfully',
-      chat: {
-        chatId: chat.chatId,
-        assignedAgent: agent.fullName,
-        status: chat.status
-      }
-    });
-  } catch (error) {
-    console.error('❌ Assign chat error:', error);
-    res.status(500).json({ success: false, message: 'Failed to assign chat' });
-  }
-});
 
 app.put('/api/agent/status', authenticateAgent, async (req, res) => {
   try {
@@ -5077,51 +5144,98 @@ app.put('/api/agent/status', authenticateAgent, async (req, res) => {
 app.get('/api/agent/stats', authenticateAgent, async (req, res) => {
   try {
     const agentId = req.agentUser._id;
+    const now = new Date();
+    const today = new Date(now.setHours(0, 0, 0, 0));
+    const thisWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-    const totalChats = await global.Chat.countDocuments({ assignedAgent: agentId });
-    const openChats = await global.Chat.countDocuments({ 
-      assignedAgent: agentId, 
-      status: { $in: ['open', 'assigned'] } 
-    });
-    const inProgressChats = await global.Chat.countDocuments({ 
-      assignedAgent: agentId, 
-      status: 'in-progress' 
-    });
-    const resolvedChats = await global.Chat.countDocuments({ 
-      assignedAgent: agentId, 
-      status: 'resolved' 
-    });
-    const closedChats = await global.Chat.countDocuments({ 
-      assignedAgent: agentId, 
-      status: 'closed' 
-    });
+    // Get comprehensive statistics
+    const [
+      // Total chats assigned to agent
+      totalChats,
+      
+      // Open chats (available in queue)
+      openChats,
+      
+      // Chats assigned to this agent
+      assignedChats,
+      
+      // Active chats (assigned or in-progress)
+      inProgressChats,
+      
+      // Resolved chats
+      resolvedChats,
+      
+      // Closed chats
+      closedChats,
+      
+      // Today's chats
+      todayChats,
+      
+      // This week's chats
+      weekChats,
+      
+      // Response time calculation
+      avgResponseTimeData,
+      
+      // Customer satisfaction
+      customerSatisfactionData
+    ] = await Promise.all([
+      global.Chat.countDocuments({ assignedAgent: agentId }),
+      global.Chat.countDocuments({ status: 'open' }),
+      global.Chat.countDocuments({ assignedAgent: agentId, status: 'assigned' }),
+      global.Chat.countDocuments({ assignedAgent: agentId, status: 'in-progress' }),
+      global.Chat.countDocuments({ assignedAgent: agentId, status: 'resolved' }),
+      global.Chat.countDocuments({ assignedAgent: agentId, status: 'closed' }),
+      global.Chat.countDocuments({ assignedAgent: agentId, createdAt: { $gte: today } }),
+      global.Chat.countDocuments({ assignedAgent: agentId, createdAt: { $gte: thisWeek } }),
+      global.Chat.aggregate([
+        { $match: { assignedAgent: agentId, firstResponseTime: { $exists: true } } },
+        { $group: { _id: null, avg: { $avg: '$firstResponseTime' } } }
+      ]),
+      global.Chat.aggregate([
+        { $match: { assignedAgent: agentId, rating: { $exists: true } } },
+        { $group: { _id: null, avg: { $avg: '$rating' } } }
+      ])
+    ]);
 
-    const chatsWithResponseTime = await global.Chat.find({ 
+    // Calculate resolved today
+    const resolvedToday = await global.Chat.countDocuments({
       assignedAgent: agentId,
-      firstResponseTime: { $exists: true }
-    }).select('firstResponseTime');
+      status: 'resolved',
+      resolvedAt: { $gte: today }
+    });
 
-    let avgResponseTime = 0;
-    if (chatsWithResponseTime.length > 0) {
-      const total = chatsWithResponseTime.reduce((sum, chat) => sum + chat.firstResponseTime, 0);
-      avgResponseTime = Math.round(total / chatsWithResponseTime.length);
-    }
+    const avgResponse = avgResponseTimeData[0]?.avg || 0;
+    const avgRating = customerSatisfactionData[0]?.avg || 0;
+    const satisfactionRate = avgRating > 0 ? Math.round((avgRating / 5) * 100) : 0;
 
-    const agent = await global.User.findById(agentId);
-    const rating = agent.agentInfo?.rating || 0;
+    const stats = {
+      // Overview stats
+      totalChats,
+      openChats,
+      assignedChats,
+      inProgressChats,
+      resolvedChats,
+      closedChats,
+      activeChats: assignedChats + inProgressChats,
+      
+      // Time-based stats
+      totalChatsToday: todayChats,
+      totalChatsWeek: weekChats,
+      resolvedToday,
+      
+      // Performance metrics
+      avgChatDuration: Math.round(avgResponse),
+      avgResponseTime: Math.round(avgResponse),
+      satisfactionRate,
+      rating: avgRating.toFixed(1)
+    };
+
+    console.log(`✅ Agent stats calculated:`, stats);
 
     res.json({
       success: true,
-      stats: {
-        totalChats,
-        openChats,
-        inProgressChats,
-        resolvedChats,
-        closedChats,
-        activeChats: openChats + inProgressChats,
-        avgResponseTime: avgResponseTime,
-        rating: rating.toFixed(1)
-      }
+      stats
     });
   } catch (error) {
     console.error('❌ Get stats error:', error);
