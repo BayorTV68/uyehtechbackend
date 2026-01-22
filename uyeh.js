@@ -4741,13 +4741,14 @@ app.post('/api/agent/chats/:chatId/assign', authenticateAgent, async (req, res) 
     }
 
     const requestingAgentId = req.agentUser._id.toString();
-    const targetAgentId = agentId;
+    const targetAgentId = agentId.toString();
 
-    // ✅ Agents can self-assign OR admins can assign to anyone
-    if (!req.agentUser.isAdmin && requestingAgentId !== targetAgentId) {
+    // ✅ CRITICAL FIX: Allow agents to assign to themselves freely
+    // Only restrict if trying to assign to ANOTHER agent (admin only)
+    if (requestingAgentId !== targetAgentId && !req.agentUser.isAdmin) {
       return res.status(403).json({ 
         success: false, 
-        message: 'Agents can only assign chats to themselves' 
+        message: 'Only admins can assign chats to other agents. You can assign chats to yourself.' 
       });
     }
 
@@ -4756,7 +4757,7 @@ app.post('/api/agent/chats/:chatId/assign', authenticateAgent, async (req, res) 
       return res.status(404).json({ success: false, message: 'Chat session not found' });
     }
 
-    // ✅ Check if chat is already assigned
+    // ✅ Check if chat is already assigned to ANOTHER agent
     if (chat.assignedAgent && chat.assignedAgent.toString() !== targetAgentId) {
       return res.status(400).json({ 
         success: false, 
@@ -4777,21 +4778,12 @@ app.post('/api/agent/chats/:chatId/assign', authenticateAgent, async (req, res) 
       return res.status(400).json({ success: false, message: 'Invalid agent ID' });
     }
 
-    // ✅ Check if agent is online for self-assignment
-    if (requestingAgentId === targetAgentId && agent.agentInfo) {
-      if (agent.agentInfo.status === 'offline') {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'You must be online to assign chats to yourself' 
-        });
-      }
-      
-      if (agent.agentInfo.activeChats >= agent.agentInfo.maxChats) {
-        return res.status(400).json({ 
-          success: false, 
-          message: `You have reached your maximum chat limit (${agent.agentInfo.maxChats})` 
-        });
-      }
+    // ✅ REMOVED: Online status check - agents can assign while any status
+    // ✅ REMOVED: Max chats check - let agents manage their own capacity
+    
+    // Optional: Keep max chats check as a warning only (not blocking)
+    if (agent.agentInfo && agent.agentInfo.activeChats >= agent.agentInfo.maxChats) {
+      console.log(`⚠️ Agent ${agent.fullName} is at max capacity (${agent.agentInfo.maxChats}) but allowing assignment`);
     }
 
     // Update previous agent stats if chat was already assigned
@@ -4804,22 +4796,27 @@ app.post('/api/agent/chats/:chatId/assign', authenticateAgent, async (req, res) 
     }
 
     // Assign chat
+    const wasAlreadyAssigned = chat.assignedAgent && chat.assignedAgent.toString() === agentId;
+    
     chat.assignedAgent = agentId;
     chat.status = 'assigned';
     
-    chat.messages.push({
-      messageId: global.generateMessageId(),
-      sender: 'system',
-      senderId: 'system',
-      senderName: 'System',
-      message: `Chat assigned to agent: ${agent.fullName}`,
-      timestamp: new Date()
-    });
+    // Only add system message if this is a new assignment
+    if (!wasAlreadyAssigned) {
+      chat.messages.push({
+        messageId: global.generateMessageId(),
+        sender: 'system',
+        senderId: 'system',
+        senderName: 'System',
+        message: `Chat assigned to agent: ${agent.fullName}`,
+        timestamp: new Date()
+      });
+    }
 
     await chat.save();
 
-    // Update agent stats
-    if (agent.agentInfo) {
+    // Update agent stats (only if new assignment)
+    if (!wasAlreadyAssigned && agent.agentInfo) {
       agent.agentInfo.activeChats = (agent.agentInfo.activeChats || 0) + 1;
       agent.agentInfo.totalChats = (agent.agentInfo.totalChats || 0) + 1;
       await agent.save();
@@ -4837,21 +4834,27 @@ app.post('/api/agent/chats/:chatId/assign', authenticateAgent, async (req, res) 
       }
     });
 
-    // Send email notification
-    await global.sendAgentAssignmentEmail(agent.email, {
-      chatId: chat.chatId,
-      customerName: chat.customerName,
-      subject: chat.subject,
-      department: chat.department,
-      priority: chat.priority
+    // Broadcast to other agents that this chat is now taken
+    global.wss.clients.forEach((client) => {
+      if (client.agentId && client.agentId !== agentId.toString()) {
+        try {
+          client.send(JSON.stringify({
+            type: 'chat_taken',
+            chatId: chat.chatId,
+            assignedTo: agent.fullName
+          }));
+        } catch (error) {
+          console.error('Error broadcasting chat taken:', error);
+        }
+      }
     });
 
-    console.log(`✅ Chat ${chatId} assigned to agent ${agent.fullName}`);
+    console.log(`✅ Chat ${chatId} ${wasAlreadyAssigned ? 'confirmed assigned to' : 'assigned to'} agent ${agent.fullName}`);
 
     res.json({
       success: true,
       message: requestingAgentId === targetAgentId 
-        ? 'Chat successfully assigned to you' 
+        ? (wasAlreadyAssigned ? 'Chat already assigned to you' : 'Chat successfully assigned to you') 
         : 'Chat assigned successfully',
       chat: {
         chatId: chat.chatId,
@@ -4865,6 +4868,103 @@ app.post('/api/agent/chats/:chatId/assign', authenticateAgent, async (req, res) 
   }
 });
 
+
+app.post('/api/agent/chats/:chatId/pickup', authenticateAgent, async (req, res) => {
+  try {
+    const { chatId } = req.params;
+    const agentId = req.agentUser._id;
+
+    const chat = await global.Chat.findOne({ chatId });
+    if (!chat) {
+      return res.status(404).json({ success: false, message: 'Chat session not found' });
+    }
+
+    // ✅ Check if already assigned to someone else
+    if (chat.assignedAgent && chat.assignedAgent.toString() !== agentId.toString()) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'This chat has already been picked up by another agent' 
+      });
+    }
+
+    // ✅ Check if chat is closed
+    if (chat.status === 'closed' || chat.status === 'resolved') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Cannot pick up a closed or resolved chat' 
+      });
+    }
+
+    const agent = req.agentUser;
+    const wasAlreadyAssigned = chat.assignedAgent && chat.assignedAgent.toString() === agentId.toString();
+
+    // Assign chat
+    chat.assignedAgent = agentId;
+    chat.status = 'assigned';
+    
+    if (!wasAlreadyAssigned) {
+      chat.messages.push({
+        messageId: global.generateMessageId(),
+        sender: 'system',
+        senderId: 'system',
+        senderName: 'System',
+        message: `Chat picked up by agent: ${agent.fullName}`,
+        timestamp: new Date()
+      });
+    }
+
+    await chat.save();
+
+    // Update agent stats
+    if (!wasAlreadyAssigned && agent.agentInfo) {
+      agent.agentInfo.activeChats = (agent.agentInfo.activeChats || 0) + 1;
+      agent.agentInfo.totalChats = (agent.agentInfo.totalChats || 0) + 1;
+      await agent.save();
+    }
+
+    // Notify via WebSocket
+    global.sendToAgent(agentId.toString(), {
+      type: 'chat_assigned',
+      chat: {
+        chatId: chat.chatId,
+        customerName: chat.customerName,
+        subject: chat.subject,
+        department: chat.department,
+        priority: chat.priority
+      }
+    });
+
+    // Broadcast to other agents
+    global.wss.clients.forEach((client) => {
+      if (client.agentId && client.agentId !== agentId.toString()) {
+        try {
+          client.send(JSON.stringify({
+            type: 'chat_taken',
+            chatId: chat.chatId,
+            assignedTo: agent.fullName
+          }));
+        } catch (error) {
+          console.error('Error broadcasting chat taken:', error);
+        }
+      }
+    });
+
+    console.log(`✅ Chat ${chatId} picked up by agent ${agent.fullName}`);
+
+    res.json({
+      success: true,
+      message: wasAlreadyAssigned ? 'Chat already assigned to you' : 'Chat successfully picked up!',
+      chat: {
+        chatId: chat.chatId,
+        assignedAgent: agent.fullName,
+        status: chat.status
+      }
+    });
+  } catch (error) {
+    console.error('❌ Pickup chat error:', error);
+    res.status(500).json({ success: false, message: 'Failed to pick up chat' });
+  }
+});
 
 app.post('/api/chat/:chatId/send', async (req, res) => {
   try {
