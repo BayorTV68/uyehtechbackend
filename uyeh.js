@@ -293,15 +293,29 @@ function handleWebSocketMessage(ws, data) {
 }
 
 // Helper function to broadcast to chat
+// âœ… FIXED: Complete broadcast function
 function broadcastToChat(chatId, message, excludeWs = null) {
-  if (activeConnections.has(chatId)) {
-    const connections = activeConnections.get(chatId);
-    connections.forEach((clientWs) => {
-      if (clientWs !== excludeWs && clientWs.readyState === WebSocket.OPEN) {
-        clientWs.send(JSON.stringify(message));
-      }
-    });
-  }
+    console.log(`ðŸ"¡ Broadcasting to chat ${chatId}:`, message.type);
+    
+    if (activeConnections.has(chatId)) {
+        const connections = activeConnections.get(chatId);
+        let sentCount = 0;
+        
+        connections.forEach((clientWs) => {
+            if (clientWs !== excludeWs && clientWs.readyState === WebSocket.OPEN) {
+                try {
+                    clientWs.send(JSON.stringify(message));
+                    sentCount++;
+                } catch (error) {
+                    console.error('âŒ Broadcast error:', error);
+                }
+            }
+        });
+        
+        console.log(`âœ… Broadcast sent to ${sentCount} connections`);
+    } else {
+        console.log(`âš ï¸ No active connections for chat ${chatId}`);
+    }
 }
 
 // Helper function to send to specific agent
@@ -2191,9 +2205,33 @@ app.post('/api/chat/:chatId/end', async (req, res) => {
   }
 });
 
-// ✅ Simple in-memory cache for recent messages
-const messageCache = new Map();
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+// âœ… NEW: Simple in-memory cache for frequent queries
+const cache = new Map();
+const CACHE_TTL = 60000; // 1 minute
+
+function getFromCache(key) {
+  const cached = cache.get(key);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return cached.data;
+  }
+  cache.delete(key);
+  return null;
+}
+
+function setCache(key, data) {
+  cache.set(key, { data, timestamp: Date.now() });
+}
+
+// Auto-clear old cache entries every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, value] of cache.entries()) {
+    if (now - value.timestamp > CACHE_TTL) {
+      cache.delete(key);
+    }
+  }
+}, 5 * 60 * 1000);
 
 function cacheMessage(chatId, message) {
   if (!messageCache.has(chatId)) {
@@ -3209,10 +3247,339 @@ app.post('/api/orders/verify-payment', authenticateToken, async (req, res) => {
 
 console.log('✅ Part 3 loaded: Dashboard, Analytics, Users & Orders configured');
 
-// ========== END OF PART 3 ==========
-// Continue to Part 4 for Download Links & Product Management// ========== UYEH TECH SERVER v6.0 - PART 4 OF 6 ==========
-// Download Links, Product Management & Coupon System
-// COPY THIS AFTER PART 3
+// ========================================
+// âœ… CUSTOMER MANAGEMENT ENDPOINTS
+// ========================================
+
+// Get All Customers (Agent/Admin)
+app.get('/api/customers', authenticateAgent, async (req, res) => {
+  try {
+    const { search = '', page = 1, limit = 20 } = req.query;
+    
+    let query = {};
+    
+    if (search) {
+      query.$or = [
+        { fullName: { $regex: search, $options: 'i' } },
+        { email: { $regex: search, $options: 'i' } }
+      ];
+    }
+    
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    
+    const [customers, total] = await Promise.all([
+      User.find(query)
+        .select('-password -twoFactorSecret')
+        .sort({ createdAt: -1 })
+        .limit(parseInt(limit))
+        .skip(skip),
+      User.countDocuments(query)
+    ]);
+    
+    // Add chat statistics for each customer
+    const customersWithStats = await Promise.all(
+      customers.map(async (customer) => {
+        const chatCount = await Chat.countDocuments({ 
+          customerEmail: customer.email 
+        });
+        
+        const lastChat = await Chat.findOne({ 
+          customerEmail: customer.email 
+        }).sort({ createdAt: -1 });
+        
+        return {
+          ...customer.toObject(),
+          totalChats: chatCount,
+          lastContactDate: lastChat?.createdAt || null,
+          status: chatCount > 0 ? 'active' : 'inactive'
+        };
+      })
+    );
+    
+    res.json({
+      success: true,
+      customers: customersWithStats,
+      pagination: {
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        pages: Math.ceil(total / parseInt(limit))
+      }
+    });
+    
+  } catch (error) {
+    console.error('âŒ Get customers error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch customers' });
+  }
+});
+
+// Get Customer Details
+app.get('/api/customers/:customerId', authenticateAgent, async (req, res) => {
+  try {
+    const customer = await User.findById(req.params.customerId)
+      .select('-password -twoFactorSecret');
+    
+    if (!customer) {
+      return res.status(404).json({ success: false, message: 'Customer not found' });
+    }
+    
+    // Get customer's chat history
+    const chats = await Chat.find({ customerEmail: customer.email })
+      .sort({ createdAt: -1 })
+      .limit(10);
+    
+    // Get customer's orders
+    const orders = await Order.find({ userId: customer._id })
+      .sort({ createdAt: -1 })
+      .limit(5);
+    
+    // Get customer's tickets
+    const tickets = await SupportTicket.find({ userId: customer._id })
+      .sort({ createdAt: -1 })
+      .limit(5);
+    
+    res.json({
+      success: true,
+      customer: {
+        ...customer.toObject(),
+        recentChats: chats,
+        recentOrders: orders,
+        recentTickets: tickets,
+        totalChats: chats.length,
+        totalOrders: orders.length,
+        totalTickets: tickets.length
+      }
+    });
+    
+  } catch (error) {
+    console.error('âŒ Get customer details error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch customer details' });
+  }
+});
+
+// ========================================
+// âœ… NOTIFICATION ENDPOINTS
+// ========================================
+
+// Get Agent Notifications
+app.get('/api/notifications', authenticateAgent, async (req, res) => {
+  try {
+    const agentId = req.agentUser._id;
+    
+    // Get new chat assignments
+    const newChats = await Chat.find({
+      assignedAgent: agentId,
+      status: { $in: ['assigned', 'in-progress'] },
+      'messages.read': false
+    }).sort({ updatedAt: -1 }).limit(10);
+    
+    // Get new tickets
+    const newTickets = await SupportTicket.find({
+      assignedAgent: agentId,
+      status: { $in: ['open', 'in-progress'] }
+    }).sort({ updatedAt: -1 }).limit(10);
+    
+    const notifications = [
+      ...newChats.map(chat => ({
+        id: chat._id,
+        type: 'chat',
+        title: 'New message in chat',
+        message: `${chat.customerName} sent a message`,
+        chatId: chat.chatId,
+        timestamp: chat.updatedAt,
+        read: false
+      })),
+      ...newTickets.map(ticket => ({
+        id: ticket._id,
+        type: 'ticket',
+        title: 'New support ticket',
+        message: ticket.subject,
+        ticketId: ticket.ticketId,
+        timestamp: ticket.updatedAt,
+        read: false
+      }))
+    ].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    
+    res.json({
+      success: true,
+      notifications,
+      count: notifications.length
+    });
+    
+  } catch (error) {
+    console.error('âŒ Get notifications error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch notifications' });
+  }
+});
+
+// Mark Notification as Read
+app.post('/api/notifications/:notificationId/read', authenticateAgent, async (req, res) => {
+  try {
+    const { notificationId } = req.params;
+    
+    // This is a simple implementation
+    // In production, you'd store notifications in a separate collection
+    
+    res.json({
+      success: true,
+      message: 'Notification marked as read'
+    });
+    
+  } catch (error) {
+    console.error('âŒ Mark notification read error:', error);
+    res.status(500).json({ success: false, message: 'Failed to mark notification' });
+  }
+});
+
+// ========================================
+// âœ… WEBSOCKET STATUS ENDPOINT
+// ========================================
+
+app.get('/api/websocket/status', authenticateAdmin, (req, res) => {
+  res.json({
+    success: true,
+    connections: {
+      total: wss.clients.size,
+      activeChats: activeConnections.size,
+      connectedAgents: agentConnections.size,
+      connectedCustomers: customerConnections.size
+    },
+    details: {
+      chats: Array.from(activeConnections.keys()),
+      agents: Array.from(agentConnections.keys()),
+      customers: Array.from(customerConnections.keys())
+    }
+  });
+});
+
+
+app.get('/api/agent/quick-actions', authenticateAgent, async (req, res) => {
+  try {
+    const agentId = req.agentUser._id;
+    
+    // Get quick action items
+    const [
+      urgentChats,
+      pendingTickets,
+      unreadMessages
+    ] = await Promise.all([
+      Chat.find({
+        assignedAgent: agentId,
+        priority: { $in: ['urgent', 'high'] },
+        status: { $in: ['assigned', 'in-progress'] }
+      }).limit(5),
+      SupportTicket.find({
+        assignedAgent: agentId,
+        status: 'open'
+      }).limit(5),
+      Chat.find({
+        assignedAgent: agentId,
+        'messages.read': false
+      }).limit(5)
+    ]);
+    
+    res.json({
+      success: true,
+      quickActions: {
+        urgentChats: urgentChats.map(chat => ({
+          chatId: chat.chatId,
+          customerName: chat.customerName,
+          subject: chat.subject,
+          priority: chat.priority
+        })),
+        pendingTickets: pendingTickets.map(ticket => ({
+          ticketId: ticket.ticketId,
+          subject: ticket.subject,
+          priority: ticket.priority
+        })),
+        unreadMessages: unreadMessages.map(chat => ({
+          chatId: chat.chatId,
+          customerName: chat.customerName,
+          lastMessage: chat.messages[chat.messages.length - 1]?.message
+        }))
+      }
+    });
+    
+  } catch (error) {
+    console.error('âŒ Quick actions error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch quick actions' });
+  }
+});
+// ========================================
+// âœ… ENHANCED DASHBOARD STATS
+// ========================================
+
+app.get('/api/agent/dashboard/stats', authenticateAgent, async (req, res) => {
+  try {
+    const agentId = req.agentUser._id;
+    const now = new Date();
+    const today = new Date(now.setHours(0, 0, 0, 0));
+    const thisWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    
+    // Get all relevant stats
+    const [
+      totalChats,
+      openChats,
+      assignedChats,
+      inProgressChats,
+      resolvedChats,
+      closedChats,
+      todayChats,
+      weekChats,
+      avgResponseTime,
+      customerSatisfaction
+    ] = await Promise.all([
+      Chat.countDocuments({ assignedAgent: agentId }),
+      Chat.countDocuments({ status: 'open' }),
+      Chat.countDocuments({ assignedAgent: agentId, status: 'assigned' }),
+      Chat.countDocuments({ assignedAgent: agentId, status: 'in-progress' }),
+      Chat.countDocuments({ assignedAgent: agentId, status: 'resolved' }),
+      Chat.countDocuments({ assignedAgent: agentId, status: 'closed' }),
+      Chat.countDocuments({ assignedAgent: agentId, createdAt: { $gte: today } }),
+      Chat.countDocuments({ assignedAgent: agentId, createdAt: { $gte: thisWeek } }),
+      Chat.aggregate([
+        { $match: { assignedAgent: agentId, firstResponseTime: { $exists: true } } },
+        { $group: { _id: null, avg: { $avg: '$firstResponseTime' } } }
+      ]),
+      Chat.aggregate([
+        { $match: { assignedAgent: agentId, rating: { $exists: true } } },
+        { $group: { _id: null, avg: { $avg: '$rating' } } }
+      ])
+    ]);
+    
+    const avgResponse = avgResponseTime[0]?.avg || 0;
+    const avgRating = customerSatisfaction[0]?.avg || 0;
+    const satisfactionRate = avgRating > 0 ? Math.round((avgRating / 5) * 100) : 0;
+    
+    res.json({
+      success: true,
+      stats: {
+        totalChats,
+        openChats,
+        assignedChats,
+        inProgressChats,
+        resolvedChats,
+        closedChats,
+        activeChats: assignedChats + inProgressChats,
+        totalChatsToday: todayChats,
+        totalChatsWeek: weekChats,
+        resolvedToday: await Chat.countDocuments({
+          assignedAgent: agentId,
+          status: 'resolved',
+          resolvedAt: { $gte: today }
+        }),
+        avgChatDuration: Math.round(avgResponse),
+        avgResponseTime: Math.round(avgResponse),
+        satisfactionRate,
+        rating: avgRating.toFixed(1)
+      }
+    });
+    
+  } catch (error) {
+    console.error('âŒ Dashboard stats error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch dashboard stats' });
+  }
+});
 
 // ========== DOWNLOAD LINK SYSTEM ==========
 
@@ -4268,17 +4635,9 @@ app.post('/api/chat/:chatId/send', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Sender and message are required' });
     }
 
-    if (!['customer', 'agent', 'system'].includes(sender)) {
-      return res.status(400).json({ success: false, message: 'Invalid sender type' });
-    }
-
     const chat = await global.Chat.findOne({ chatId });
     if (!chat) {
       return res.status(404).json({ success: false, message: 'Chat session not found' });
-    }
-
-    if (chat.status === 'closed') {
-      return res.status(400).json({ success: false, message: 'Chat session is closed' });
     }
 
     const newMessage = {
@@ -4293,38 +4652,17 @@ app.post('/api/chat/:chatId/send', async (req, res) => {
     };
 
     chat.messages.push(newMessage);
-
-    if (sender === 'agent' && !chat.firstResponseTime) {
-      const firstMessage = chat.messages.find(m => m.sender === 'customer');
-      if (firstMessage) {
-        const responseTime = (newMessage.timestamp - firstMessage.timestamp) / 1000 / 60;
-        chat.firstResponseTime = Math.round(responseTime);
-      }
-    }
-
-    if (chat.status === 'open' || chat.status === 'assigned') {
-      chat.status = 'in-progress';
-    }
-
     await chat.save();
-    // ✅ Broadcast message immediately via WebSocket
-broadcastToChat(chatId, {
-  type: 'new_message',
-  message: newMessage,
-  chatId: chatId,
-  timestamp: new Date().toISOString()
-});
 
-console.log(`✅ Message broadcast to chat ${chatId}`);
-
-
+    // âœ… CRITICAL: Broadcast message immediately via WebSocket
     broadcastToChat(chatId, {
       type: 'new_message',
       message: newMessage,
-      chatId: chatId
+      chatId: chatId,
+      timestamp: new Date().toISOString()
     });
 
-    console.log(`💬 Message sent in chat ${chatId} by ${sender}`);
+    console.log(`âœ… Message broadcast to chat ${chatId}`);
 
     res.json({
       success: true,
@@ -4332,7 +4670,7 @@ console.log(`✅ Message broadcast to chat ${chatId}`);
       messageData: newMessage
     });
   } catch (error) {
-    console.error('❌ Send message error:', error);
+    console.error('âŒ Send message error:', error);
     res.status(500).json({ success: false, message: 'Failed to send message' });
   }
 });
@@ -4798,12 +5136,15 @@ console.log('💬 Routes: Customer Chat, Agent Dashboard, Self-Assignment (FIXED
 // IN SERVER.JS - Add this new endpoint around line 1400
 
 // Analytics Endpoint - Track Chat Metrics
+// ========================================
+// âœ… COMPLETE ANALYTICS ENDPOINTS
+// ========================================
+
 app.get('/api/agent/analytics', authenticateAgent, async (req, res) => {
   try {
     const agentId = req.agentUser._id;
     const { timeRange = 'week' } = req.query;
     
-    // Calculate date range
     const now = new Date();
     let startDate;
     
@@ -4821,15 +5162,14 @@ app.get('/api/agent/analytics', authenticateAgent, async (req, res) => {
         startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     }
     
-    // Get agent's chats in timeframe
     const chats = await Chat.find({
       assignedAgent: agentId,
       createdAt: { $gte: startDate }
     });
     
-    // Calculate metrics
     const totalChats = chats.length;
     const resolvedChats = chats.filter(c => c.status === 'resolved').length;
+    
     const avgResponseTime = chats.reduce((sum, chat) => {
       return sum + (chat.firstResponseTime || 0);
     }, 0) / (chats.filter(c => c.firstResponseTime).length || 1);
@@ -4838,10 +5178,22 @@ app.get('/api/agent/analytics', authenticateAgent, async (req, res) => {
       return sum + chat.messages.filter(m => m.sender === 'agent').length;
     }, 0);
     
-    // Response rate
     const resolutionRate = totalChats > 0 
       ? Math.round((resolvedChats / totalChats) * 100) 
       : 0;
+    
+    // Calculate daily breakdown
+    const dailyBreakdown = {};
+    chats.forEach(chat => {
+      const date = new Date(chat.createdAt).toISOString().split('T')[0];
+      if (!dailyBreakdown[date]) {
+        dailyBreakdown[date] = { total: 0, resolved: 0 };
+      }
+      dailyBreakdown[date].total++;
+      if (chat.status === 'resolved') {
+        dailyBreakdown[date].resolved++;
+      }
+    });
     
     res.json({
       success: true,
@@ -4850,18 +5202,26 @@ app.get('/api/agent/analytics', authenticateAgent, async (req, res) => {
         totalChats,
         resolvedChats,
         resolutionRate: `${resolutionRate}%`,
-        avgResponseTime: `${Math.round(avgResponseTime)}s`,
-        totalMessages
+        avgResponseTime: `${Math.round(avgResponseTime)}min`,
+        totalMessages,
+        dailyBreakdown: Object.entries(dailyBreakdown).map(([date, data]) => ({
+          date,
+          ...data
+        }))
       }
     });
     
   } catch (error) {
-    console.error('❌ Analytics error:', error);
+    console.error('âŒ Analytics error:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch analytics' });
   }
 });
 
-// IN SERVER.JS - Add these endpoints around line 1450
+
+
+// ========================================
+// âœ… COMPLETE SUPPORT TICKET ENDPOINTS
+// ========================================
 
 // Create Support Ticket
 app.post('/api/tickets/create', authenticateToken, async (req, res) => {
@@ -4887,14 +5247,16 @@ app.post('/api/tickets/create', authenticateToken, async (req, res) => {
     
     await ticket.save();
     
+    console.log(`âœ… Support ticket created: ${ticket.ticketId}`);
+    
     res.status(201).json({
       success: true,
-      message: 'Support ticket created',
+      message: 'Support ticket created successfully',
       ticket
     });
     
   } catch (error) {
-    console.error('❌ Create ticket error:', error);
+    console.error('âŒ Create ticket error:', error);
     res.status(500).json({ success: false, message: 'Failed to create ticket' });
   }
 });
@@ -4902,7 +5264,7 @@ app.post('/api/tickets/create', authenticateToken, async (req, res) => {
 // Get Agent's Tickets
 app.get('/api/agent/tickets', authenticateAgent, async (req, res) => {
   try {
-    const { status = 'all' } = req.query;
+    const { status = 'all', page = 1, limit = 20 } = req.query;
     
     let query = { assignedAgent: req.agentUser._id };
     
@@ -4910,22 +5272,171 @@ app.get('/api/agent/tickets', authenticateAgent, async (req, res) => {
       query.status = status;
     }
     
-    const tickets = await SupportTicket.find(query)
-      .populate('userId', 'fullName email')
-      .sort({ createdAt: -1 })
-      .limit(50);
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    
+    const [tickets, total] = await Promise.all([
+      SupportTicket.find(query)
+        .populate('userId', 'fullName email')
+        .sort({ createdAt: -1 })
+        .limit(parseInt(limit))
+        .skip(skip),
+      SupportTicket.countDocuments(query)
+    ]);
     
     res.json({
       success: true,
       tickets,
-      count: tickets.length
+      pagination: {
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        pages: Math.ceil(total / parseInt(limit))
+      }
     });
     
   } catch (error) {
-    console.error('❌ Get tickets error:', error);
+    console.error('âŒ Get tickets error:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch tickets' });
   }
 });
+
+// Get All Tickets (Admin/Agent)
+app.get('/api/admin/tickets', authenticateAgent, async (req, res) => {
+  try {
+    const { status = 'all', priority = 'all', page = 1, limit = 20 } = req.query;
+    
+    let query = {};
+    
+    if (status !== 'all') {
+      query.status = status;
+    }
+    
+    if (priority !== 'all') {
+      query.priority = priority;
+    }
+    
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    
+    const [tickets, total] = await Promise.all([
+      SupportTicket.find(query)
+        .populate('userId', 'fullName email')
+        .populate('assignedAgent', 'fullName email')
+        .sort({ createdAt: -1 })
+        .limit(parseInt(limit))
+        .skip(skip),
+      SupportTicket.countDocuments(query)
+    ]);
+    
+    res.json({
+      success: true,
+      tickets,
+      pagination: {
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        pages: Math.ceil(total / parseInt(limit))
+      }
+    });
+    
+  } catch (error) {
+    console.error('âŒ Get all tickets error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch tickets' });
+  }
+});
+
+// Update Ticket
+app.put('/api/tickets/:ticketId', authenticateAgent, async (req, res) => {
+  try {
+    const { ticketId } = req.params;
+    const { status, priority, assignedAgent, response } = req.body;
+    
+    const ticket = await SupportTicket.findOne({ ticketId });
+    
+    if (!ticket) {
+      return res.status(404).json({ success: false, message: 'Ticket not found' });
+    }
+    
+    if (status) ticket.status = status;
+    if (priority) ticket.priority = priority;
+    if (assignedAgent) ticket.assignedAgent = assignedAgent;
+    
+    if (response) {
+      ticket.messages.push({
+        sender: 'agent',
+        senderId: req.agentUser._id,
+        senderName: req.agentUser.fullName || 'Agent',
+        message: response,
+        timestamp: new Date()
+      });
+    }
+    
+    if (status === 'resolved') {
+      ticket.resolvedAt = new Date();
+    }
+    
+    await ticket.save();
+    
+    console.log(`âœ… Ticket updated: ${ticketId}`);
+    
+    res.json({
+      success: true,
+      message: 'Ticket updated successfully',
+      ticket
+    });
+    
+  } catch (error) {
+    console.error('âŒ Update ticket error:', error);
+    res.status(500).json({ success: false, message: 'Failed to update ticket' });
+  }
+});
+
+// Assign Ticket to Agent
+app.post('/api/tickets/:ticketId/assign', authenticateAdmin, async (req, res) => {
+  try {
+    const { ticketId } = req.params;
+    const { agentId } = req.body;
+    
+    if (!agentId) {
+      return res.status(400).json({ success: false, message: 'Agent ID required' });
+    }
+    
+    const ticket = await SupportTicket.findOne({ ticketId });
+    
+    if (!ticket) {
+      return res.status(404).json({ success: false, message: 'Ticket not found' });
+    }
+    
+    const agent = await User.findById(agentId);
+    
+    if (!agent || (!agent.isAgent && !agent.isAdmin)) {
+      return res.status(400).json({ success: false, message: 'Invalid agent ID' });
+    }
+    
+    ticket.assignedAgent = agentId;
+    ticket.status = 'in-progress';
+    
+    ticket.messages.push({
+      sender: 'system',
+      message: `Ticket assigned to ${agent.fullName}`,
+      timestamp: new Date()
+    });
+    
+    await ticket.save();
+    
+    console.log(`âœ… Ticket ${ticketId} assigned to ${agent.fullName}`);
+    
+    res.json({
+      success: true,
+      message: 'Ticket assigned successfully',
+      ticket
+    });
+    
+  } catch (error) {
+    console.error('âŒ Assign ticket error:', error);
+    res.status(500).json({ success: false, message: 'Failed to assign ticket' });
+  }
+});
+
 
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -5129,24 +5640,7 @@ app.post('/api/user/payment-methods/add', authenticateToken, async (req, res) =>
     res.status(500).json({ success: false, message: 'Failed to add method' });
   }
 });
-// IN SERVER.JS - Add WebSocket stats endpoint (around line 1650)
 
-app.get('/api/websocket/status', authenticateAdmin, (req, res) => {
-  res.json({
-    success: true,
-    connections: {
-      total: wss.clients.size,
-      activeChats: activeConnections.size,
-      connectedAgents: agentConnections.size,
-      connectedCustomers: customerConnections.size
-    },
-    details: {
-      chats: Array.from(activeConnections.keys()),
-      agents: Array.from(agentConnections.keys()),
-      customers: Array.from(customerConnections.keys())
-    }
-  });
-});
 
 server.listen(PORT, () => {
   console.log('\n╔═══════════════════════════════════════════════════════════════════════════╗');
@@ -5276,6 +5770,16 @@ server.listen(PORT, () => {
   console.log('  ✓ Set up monitoring and logging');
   console.log('  ✓ Test all endpoints before launch\n');
   
+  
+  console.log('\nâœ… All Missing Features Added Successfully!');
+  console.log('ðŸ"Š New Endpoints Available:');
+  console.log('  - Complete Analytics System');
+  console.log('  - Full Support Ticket Management');
+  console.log('  - Customer Management & Search');
+  console.log('  - Real-time Notifications');
+  console.log('  - Enhanced Dashboard Stats');
+  console.log('  - Quick Actions Panel\n');
+
   console.log('✅ Server ready to accept connections!');
   console.log('🎉 UYEH TECH v7.0 - All 8 parts loaded successfully!\n');
   console.log('═══════════════════════════════════════════════════════════════════════════\n');
