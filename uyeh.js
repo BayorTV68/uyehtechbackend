@@ -3599,7 +3599,7 @@ app.put('/api/admin/users/:userId/demote-agent', authenticateAdmin, async (req, 
 });
 
 // APPROVE AGENT (Admin only)
-app.put('/api/admin/users/:userId/approve', authMiddleware, adminMiddleware, async (req, res) => {
+app.put('/api/admin/users/:userId/approve', authenticateAdmin, adminMiddleware, async (req, res) => {
   try {
     const user = await User.findByIdAndUpdate(
       req.params.userId,
