@@ -784,7 +784,6 @@ userSchema.pre('save', function(next) {
   next();
 });
 
-
 userSchema.index({ email: 1 });
 userSchema.index({ isAdmin: 1 });
 userSchema.index({ isAgent: 1 });
@@ -3599,6 +3598,29 @@ app.put('/api/admin/users/:userId/demote-agent', authenticateAdmin, async (req, 
   }
 });
 
+// APPROVE AGENT (Admin only)
+app.put('/api/admin/users/:userId/approve', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const user = await User.findByIdAndUpdate(
+      req.params.userId,
+      { 
+        emailVerified: true,
+        status: 'active'
+      },
+      { new: true }
+    ).select('-password');
+    
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    
+    console.log(`✅ Agent approved: ${user.email}`);
+    res.json({ success: true, message: 'Agent approved successfully', user });
+  } catch (error) {
+    console.error('❌ Approve error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
 // ========== ORDER MANAGEMENT ==========
 app.get('/api/admin/orders', authenticateAdmin, async (req, res) => {
   try {
