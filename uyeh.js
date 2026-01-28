@@ -1647,109 +1647,6 @@ app.post('/api/auth/signup', async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// 👨‍💼 AGENT SIGNUP (Creates agent account pending admin approval)
-// ════════════════════════════════════════════════════════════════════════════
-
-app.post('/api/auth/agent/signup', async (req, res) => {
-  try {
-    const { fullName, email, password, phone, country } = req.body;
-
-    console.log('👨‍💼 Agent signup request:', { email, fullName, country });
-
-    // Validation
-    if (!fullName || !email || !password) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Full name, email, and password are required' 
-      });
-    }
-
-    if (!phone || !country) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Phone and country are required for agent registration' 
-      });
-    }
-
-    // Check if email already exists
-    const existingUser = await User.findOne({ email: email.toLowerCase() });
-    if (existingUser) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Email already registered' 
-      });
-    }
-
-    // Password validation
-    if (password.length < 8) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Password must be at least 8 characters' 
-      });
-    }
-
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Create agent user (pending approval)
-    const agent = new User({
-      fullName,
-      email: email.toLowerCase(),
-      password: hashedPassword,
-      phone,
-      country,
-      role: 'agent',              // ✅ Set as agent
-      emailVerified: false,       // ✅ Pending approval
-      status: 'pending',          // ✅ Pending status
-      agentSettings: {
-        status: 'offline',
-        maxConcurrentChats: 5,
-        skills: [],
-        rating: 0,
-        totalChats: 0
-      }
-    });
-
-    await agent.save();
-
-    console.log(`✅ Agent created (pending approval): ${agent.email}`);
-    console.log(`   ID: ${agent._id}`);
-    console.log(`   Status: ${agent.status}`);
-    console.log(`   Email Verified: ${agent.emailVerified}`);
-
-    // Create token (but agent can't access dashboard until approved)
-    const token = jwt.sign(
-      { userId: agent._id, email: agent.email, role: agent.role }, 
-      JWT_SECRET, 
-      { expiresIn: '7d' }
-    );
-
-    res.status(201).json({
-      success: true,
-      message: 'Agent registration submitted! Awaiting admin approval.',
-      token,
-      user: {
-        id: agent._id,
-        fullName: agent.fullName,
-        email: agent.email,
-        role: agent.role,
-        emailVerified: agent.emailVerified,
-        status: agent.status,
-        phone: agent.phone,
-        country: agent.country
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ Agent signup error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Agent registration failed. Please try again.' 
-    });
-  }
-});
-
-// ════════════════════════════════════════════════════════════════════════════
 // 🔑 USER LOGIN (🔧 FIXED - Returns fullName + emailVerified)
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -3598,29 +3495,6 @@ app.put('/api/admin/users/:userId/demote-agent', authenticateAdmin, async (req, 
   }
 });
 
-// APPROVE AGENT (Admin only)
-app.put('/api/admin/users/:userId/approve', authenticateAdmin, adminMiddleware, async (req, res) => {
-  try {
-    const user = await User.findByIdAndUpdate(
-      req.params.userId,
-      { 
-        emailVerified: true,
-        status: 'active'
-      },
-      { new: true }
-    ).select('-password');
-    
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-    
-    console.log(`✅ Agent approved: ${user.email}`);
-    res.json({ success: true, message: 'Agent approved successfully', user });
-  } catch (error) {
-    console.error('❌ Approve error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
 // ========== ORDER MANAGEMENT ==========
 app.get('/api/admin/orders', authenticateAdmin, async (req, res) => {
   try {
