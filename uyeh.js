@@ -661,8 +661,12 @@ const TERMII_SENDER_EMAIL = process.env.TERMII_SENDER_EMAIL || 'noreply@uyehtech
 const FLUTTERWAVE_SECRET_KEY = process.env.FLUTTERWAVE_SECRET_KEY;
 const ADMIN_EMAIL = 'uyehtech@gmail.com';
 const PORT = process.env.PORT || 3000;
-const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
-
+// Smart BASE_URL detection for production
+const BASE_URL = process.env.BASE_URL || 
+                 process.env.RENDER_EXTERNAL_URL || 
+                 (process.env.NODE_ENV === 'production' 
+                   ? 'https://uyehtechbackend.onrender.com' 
+                   : `http://localhost:${PORT}`);
 // ═════════════════════════════════════════════════════════════════════════════
 // STARTUP VALIDATION & BANNER
 // ═════════════════════════════════════════════════════════════════════════════
@@ -6474,3 +6478,4 @@ console.log('🎉 ALL 8 PARTS LOADED! UYEH TECH SERVER v7.0 READY!\n');
 ║  Happy coding! 💻                                                            ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 */
+
