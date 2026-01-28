@@ -29,6 +29,8 @@ const http = require('http');
 const WebSocket = require('ws');
 const multer = require('multer');
 const path = require('path');
+const rateLimit = require('express-rate-limit');
+const PORTAL_ACCESS_HASH = 'uyehtech_treasure_2026';
 const fs = require('fs');
 require('dotenv').config();
 
@@ -2441,6 +2443,100 @@ app.post('/api/chat/:chatId/message', async (req, res) => {
   }
 });
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STEP 3: ADD THE AUTHENTICATION ENDPOINT
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Portal Access Authentication Endpoint
+app.post('/api/auth/portal-access', async (req, res) => {
+  try {
+    const { accessCode } = req.body;
+
+    // Validation
+    if (!accessCode) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Access code is required' 
+      });
+    }
+
+    console.log('🔐 Portal access attempt...');
+
+    // Verify password using bcrypt
+    const isValid = await bcrypt.compare(accessCode, PORTAL_ACCESS_HASH);
+
+    if (isValid) {
+      // ✅ CORRECT PASSWORD - Generate access token
+      const accessToken = jwt.sign(
+        { 
+          portalAccess: true,
+          timestamp: new Date().getTime()
+        }, 
+        JWT_SECRET, 
+        { expiresIn: '30m' }  // Token expires in 30 minutes
+      );
+
+      console.log('✅ Portal access GRANTED');
+      
+      res.json({
+        success: true,
+        message: 'Access granted',
+        token: accessToken
+      });
+      
+    } else {
+      // ❌ INCORRECT PASSWORD
+      console.warn('❌ Portal access DENIED - Invalid access code');
+      console.warn('   Attempt from IP:', req.ip || req.connection.remoteAddress);
+      console.warn('   Timestamp:', new Date().toISOString());
+      
+      res.status(401).json({
+        success: false,
+        message: 'Invalid access code'
+      });
+    }
+    
+  } catch (error) {
+    console.error('❌ Portal access error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error during authentication'
+    });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STEP 4 (OPTIONAL): ADD RATE LIMITING
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Rate limiter for portal access (max 5 attempts per 15 minutes)
+const portalAccessLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // Max 5 attempts
+  message: {
+    success: false,
+    message: 'Too many access attempts. Please try again later.'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    console.warn('🚨 RATE LIMIT EXCEEDED for portal access');
+    console.warn('   IP:', req.ip || req.connection.remoteAddress);
+    console.warn('   Timestamp:', new Date().toISOString());
+    
+    res.status(429).json({
+      success: false,
+      message: 'Too many failed attempts. Access blocked for 15 minutes.'
+    });
+  }
+});
+
+// Apply rate limiter to portal access endpoint
+// Replace line with app.post('/api/auth/portal-access', ... with:
+app.post('/api/auth/portal-access', portalAccessLimiter, async (req, res) => {
+  // ... rest of the code from STEP 3
+});
 
 // End Chat Session
 app.post('/api/chat/:chatId/end', async (req, res) => {
@@ -6474,3 +6570,4 @@ console.log('🎉 ALL 8 PARTS LOADED! UYEH TECH SERVER v7.0 READY!\n');
 ║  Happy coding! 💻                                                            ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 */
+
